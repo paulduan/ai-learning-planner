@@ -1,0 +1,849 @@
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
+import { PLAN_TEMPLATES } from "@/config/templates";
+
+type Step = "template" | "book" | "customize" | "dialogue" | "generating" | "preview";
+
+interface GeneratedStage {
+  title: string;
+  description: string;
+  key_topics: string[];
+  estimated_days: number;
+  core_output?: string;
+  real_world_cases?: string[];
+  assessment_questions?: string[];
+}
+
+const DIALOGUE_QUESTIONS = [
+  {
+    id: "motivation",
+    icon: "🎯",
+    title: "学习动机",
+    question: "你为什么想学这个？最终目的是什么？",
+    placeholder: "补充说明，让 AI 更理解你...",
+    hint: "选一个最接近的，或直接输入",
+    presets: [
+      "找工作 / 转行",
+      "自己做项目 / 创业",
+      "投资研究 / 行业分析",
+      "提升现有工作技能",
+      "纯兴趣 / 个人成长",
+      "考试 / 拿证",
+    ],
+  },
+  {
+    id: "background",
+    icon: "👤",
+    title: "当前背景",
+    question: "你现在的相关基础怎么样？",
+    placeholder: "补充具体情况...",
+    hint: "选一个最接近的，或直接输入",
+    presets: [
+      "完全零基础，从没接触过",
+      "了解一些基本概念",
+      "有一定基础，做过简单实践",
+      "有相关工作/学习经验",
+      "相关专业在读或毕业",
+    ],
+  },
+  {
+    id: "outcome",
+    icon: "🏁",
+    title: "期望成果",
+    question: "学完后你想达到什么程度？",
+    placeholder: "补充你的具体期望...",
+    hint: "选一个最接近的，或直接输入",
+    presets: [
+      "能找到相关领域的工作",
+      "能独立完成一个完整项目",
+      "能做出有依据的决策（投资/商业）",
+      "通过相关考试或认证",
+      "能深入理解并给别人讲清楚",
+      "能建立系统的知识框架",
+    ],
+  },
+];
+
+export default function NewPlanPage() {
+  const router = useRouter();
+  const [step, setStep] = useState<Step>("template");
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [goal, setGoal] = useState("");
+  const [weeks, setWeeks] = useState(6);
+  const [hours, setHours] = useState([2]);
+  const [level, setLevel] = useState("beginner");
+
+  const [dialogueAnswers, setDialogueAnswers] = useState<Record<string, string>>({
+    motivation: "",
+    background: "",
+    outcome: "",
+  });
+  const [dialogueIndex, setDialogueIndex] = useState(0);
+
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadDragging, setUploadDragging] = useState(false);
+
+  const [generatedPlan, setGeneratedPlan] = useState<{
+    planId: string;
+    plan: { plan_title: string; stages: GeneratedStage[] };
+  } | null>(null);
+  const [generating, setGenerating] = useState(false);
+
+  function handleTemplateSelect(templateId: string) {
+    const template = PLAN_TEMPLATES.find((t) => t.id === templateId);
+    if (template) {
+      setSelectedTemplate(templateId);
+      setGoal(template.goal);
+      setWeeks(template.recommended_weeks);
+      setHours([template.recommended_hours]);
+    }
+  }
+
+  function handleDialogueNext() {
+    if (dialogueIndex < DIALOGUE_QUESTIONS.length - 1) {
+      setDialogueIndex(dialogueIndex + 1);
+    } else {
+      handleGenerate();
+    }
+  }
+
+  async function handleGenerate() {
+    if (!uploadedFile && !goal.trim()) {
+      toast.error("请输入学习目标");
+      return;
+    }
+
+    setStep("generating");
+    setGenerating(true);
+
+    try {
+      let res: Response;
+
+      if (uploadedFile) {
+        const formData = new FormData();
+        formData.append("file", uploadedFile);
+        formData.append("duration_weeks", String(weeks));
+        formData.append("daily_hours", String(hours[0]));
+        formData.append("skill_level", level);
+        formData.append("motivation", dialogueAnswers.motivation || "");
+        formData.append("background", dialogueAnswers.background || "");
+        formData.append("expected_outcome", dialogueAnswers.outcome || "");
+
+        res = await fetch("/api/plan/generate-from-book", {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        res = await fetch("/api/plan/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            goal: goal.trim(),
+            duration_weeks: weeks,
+            daily_hours: hours[0],
+            skill_level: level,
+            motivation: dialogueAnswers.motivation,
+            background: dialogueAnswers.background,
+            expected_outcome: dialogueAnswers.outcome,
+          }),
+        });
+      }
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "生成失败");
+      }
+
+      const data = await res.json();
+      setGeneratedPlan(data);
+      setStep("preview");
+    } catch (e) {
+      toast.error((e as Error).message);
+      setStep("dialogue");
+      setDialogueIndex(DIALOGUE_QUESTIONS.length - 1);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  const currentQ = DIALOGUE_QUESTIONS[dialogueIndex];
+  const allAnswered = DIALOGUE_QUESTIONS.every(
+    (q) => dialogueAnswers[q.id]?.trim()
+  );
+
+  return (
+    <div className="min-h-screen flex flex-col relative overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-gradient-radial from-primary/6 via-transparent to-transparent rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 left-0 w-[400px] h-[400px] bg-gradient-radial from-chart-4/4 via-transparent to-transparent rounded-full blur-3xl" />
+      </div>
+
+      <header className="border-b border-border/40 px-6 py-4 bg-card/40 backdrop-blur-md relative z-10">
+        <div className="max-w-3xl mx-auto flex items-center gap-2.5">
+          <Button variant="ghost" size="sm" onClick={() => router.push("/")} className="text-muted-foreground hover:text-foreground">
+            ← 返回
+          </Button>
+          <h1 className="text-lg font-semibold">创建学习计划</h1>
+          <div className="ml-auto flex gap-1.5">
+            {(uploadedFile
+              ? ["template", "book", "customize", "dialogue", "generating", "preview"]
+              : ["template", "customize", "dialogue", "generating", "preview"]
+            ).map((s, i, arr) => (
+              <div
+                key={s}
+                className={`w-2 h-2 rounded-full transition-all ${
+                  s === step ? "bg-primary w-6" : i < arr.indexOf(step) ? "bg-primary/50" : "bg-border/40"
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 px-6 py-8 relative z-10">
+        <div className="max-w-3xl mx-auto">
+          {step === "template" && (
+            <div className="space-y-6">
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-bold gradient-text mb-3">选择学习方向</h2>
+                <p className="text-muted-foreground">
+                  选择预设模板快速开始，或自定义你的学习目标
+                </p>
+              </div>
+
+              <div className="grid gap-4">
+                {PLAN_TEMPLATES.map((template) => (
+                  <div
+                    key={template.id}
+                    className={`glass-card rounded-xl p-5 cursor-pointer transition-all hover:border-primary/30 ${
+                      selectedTemplate === template.id
+                        ? "border-primary/50 ring-1 ring-primary/30 bg-primary/5"
+                        : ""
+                    }`}
+                    onClick={() => handleTemplateSelect(template.id)}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center border border-primary/10 shrink-0">
+                        <span className="text-2xl">{template.icon}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-base font-semibold mb-0.5">{template.title}</h3>
+                        <p className="text-sm text-muted-foreground line-clamp-1">{template.description}</p>
+                        <div className="flex items-center gap-2 flex-wrap mt-2">
+                          {template.tags.map((tag) => (
+                            <Badge key={tag} variant="secondary" className="text-xs bg-secondary/50 border border-border/30">
+                              {tag}
+                            </Badge>
+                          ))}
+                          <span className="text-xs text-muted-foreground/70 ml-auto">
+                            {template.recommended_weeks} 周 · {template.recommended_hours}h/天
+                          </span>
+                        </div>
+                      </div>
+                      {selectedTemplate === template.id && (
+                        <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0">
+                          <span className="text-xs text-primary-foreground">✓</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  className="flex-1 h-12 rounded-xl glow-primary font-medium"
+                  onClick={() => setStep("customize")}
+                  disabled={!selectedTemplate}
+                >
+                  使用模板 →
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-12 rounded-xl border-border/50 px-6"
+                  onClick={() => {
+                    setSelectedTemplate(null);
+                    setGoal("");
+                    setStep("customize");
+                  }}
+                >
+                  自定义目标
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-12 rounded-xl border-border/50 px-6"
+                  onClick={() => {
+                    setSelectedTemplate(null);
+                    setUploadedFile(null);
+                    setStep("book");
+                  }}
+                >
+                  📖 上传书籍
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === "book" && (
+            <div className="space-y-6">
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-bold gradient-text mb-3">上传书籍</h2>
+                <p className="text-muted-foreground">
+                  上传一本书，AI 会基于书的内容为你生成阶段化学习计划
+                </p>
+              </div>
+
+              <div
+                className={`glass-card rounded-xl p-8 border-2 border-dashed transition-all cursor-pointer ${
+                  uploadDragging
+                    ? "border-primary/60 bg-primary/5"
+                    : uploadedFile
+                      ? "border-green-500/40 bg-green-500/5"
+                      : "border-border/40 hover:border-primary/30"
+                }`}
+                onDragOver={(e) => { e.preventDefault(); setUploadDragging(true); }}
+                onDragLeave={() => setUploadDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setUploadDragging(false);
+                  const file = e.dataTransfer.files[0];
+                  if (file) {
+                    const valid = file.name.endsWith(".pdf") || file.name.endsWith(".txt") || file.name.endsWith(".md");
+                    if (valid) {
+                      setUploadedFile(file);
+                      setGoal(`阅读学习《${file.name.replace(/\.(pdf|txt|md)$/i, "")}》`);
+                    } else {
+                      toast.error("仅支持 PDF、TXT、Markdown 格式");
+                    }
+                  }
+                }}
+                onClick={() => {
+                  const input = document.createElement("input");
+                  input.type = "file";
+                  input.accept = ".pdf,.txt,.md";
+                  input.onchange = (e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0];
+                    if (file) {
+                      setUploadedFile(file);
+                      setGoal(`阅读学习《${file.name.replace(/\.(pdf|txt|md)$/i, "")}》`);
+                    }
+                  };
+                  input.click();
+                }}
+              >
+                <div className="flex flex-col items-center gap-4 text-center">
+                  {uploadedFile ? (
+                    <>
+                      <div className="w-16 h-16 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+                        <span className="text-3xl">📗</span>
+                      </div>
+                      <div>
+                        <p className="text-base font-semibold text-green-400">{uploadedFile.name}</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {(uploadedFile.size / 1024 / 1024).toFixed(1)} MB · 点击可更换文件
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                        <span className="text-3xl">📖</span>
+                      </div>
+                      <div>
+                        <p className="text-base font-medium">拖拽文件到这里，或点击选择</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          支持 PDF、TXT、Markdown 格式
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button variant="outline" onClick={() => setStep("template")} className="h-12 rounded-xl border-border/50 px-6">
+                  ← 返回
+                </Button>
+                <Button
+                  className="flex-1 h-12 rounded-xl glow-primary font-medium"
+                  onClick={() => setStep("customize")}
+                  disabled={!uploadedFile}
+                >
+                  下一步：设置参数 →
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === "customize" && (
+            <div className="space-y-6">
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-bold gradient-text mb-3">定制你的计划</h2>
+                <p className="text-muted-foreground">告诉我你想学什么，以及你想投入多少精力</p>
+              </div>
+
+              <div className="glass-card rounded-xl p-6 space-y-7">
+                <div className="space-y-2.5">
+                  <Label className="text-base font-medium flex items-center gap-2">
+                    <span className="text-lg">🎯</span> 学习目标
+                  </Label>
+                  {uploadedFile ? (
+                    <div className="flex items-center gap-3 h-12 px-4 rounded-xl bg-green-500/5 border border-green-500/20">
+                      <span className="text-base">📗</span>
+                      <span className="text-sm font-medium text-green-400">{uploadedFile.name}</span>
+                      <button
+                        onClick={() => { setUploadedFile(null); setGoal(""); setStep("book"); }}
+                        className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        更换
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <Input
+                        placeholder="例：投资存储行业研究、AI应用开发、商务英语提升..."
+                        value={goal}
+                        onChange={(e) => setGoal(e.target.value)}
+                        className="h-12 rounded-xl bg-background/50 border-border/40 focus:border-primary/50"
+                      />
+                      <p className="text-xs text-muted-foreground/70">
+                        可以是任何领域 — 技术、投资、语言、商业、人文等
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <Label className="text-base font-medium flex items-center gap-2">
+                    <span className="text-lg">📐</span> 研究深度
+                  </Label>
+                  <RadioGroup
+                    value={String(weeks)}
+                    onValueChange={(v) => setWeeks(parseInt(v))}
+                    className="grid grid-cols-2 gap-3"
+                  >
+                    {[
+                      { value: 2, label: "快速了解", desc: "~2周，抓住核心要点", icon: "⚡" },
+                      { value: 4, label: "系统学习", desc: "~1个月，建立知识框架", icon: "📚" },
+                      { value: 8, label: "深度研究", desc: "~2个月，全面深入", icon: "🔬" },
+                      { value: 12, label: "精通之路", desc: "~3个月，专家级理解", icon: "🏆" },
+                    ].map((item) => (
+                      <label
+                        key={item.value}
+                        className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                          weeks === item.value
+                            ? "border-primary/50 bg-primary/5"
+                            : "border-border/40 hover:border-border/60"
+                        }`}
+                      >
+                        <RadioGroupItem value={String(item.value)} className="sr-only" />
+                        <span className="text-xl">{item.icon}</span>
+                        <div>
+                          <span className={`text-sm font-medium block ${weeks === item.value ? "text-primary" : ""}`}>{item.label}</span>
+                          <span className="text-xs text-muted-foreground/70">{item.desc}</span>
+                        </div>
+                      </label>
+                    ))}
+                  </RadioGroup>
+                </div>
+
+                <div className="space-y-3">
+                  <Label className="text-base font-medium flex items-center gap-2">
+                    <span className="text-lg">⏰</span> 每日投入: <span className="text-primary">{hours[0]} 小时</span>
+                  </Label>
+                  <div className="px-1">
+                    <Slider
+                      value={hours}
+                      onValueChange={(v) => setHours(Array.isArray(v) ? v : [v])}
+                      min={0.5}
+                      max={8}
+                      step={0.5}
+                      className="py-2"
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground/60 px-1">
+                    <span>0.5h 碎片时间</span>
+                    <span>8h 全天投入</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Label className="text-base font-medium flex items-center gap-2">
+                    <span className="text-lg">📊</span> 相关经验
+                  </Label>
+                  <RadioGroup
+                    value={level}
+                    onValueChange={setLevel}
+                    className="flex gap-3"
+                  >
+                    {[
+                      { value: "beginner", label: "完全不了解", icon: "🌱" },
+                      { value: "intermediate", label: "知道一些", icon: "🌿" },
+                      { value: "advanced", label: "有一定研究", icon: "🌳" },
+                    ].map((item) => (
+                      <label
+                        key={item.value}
+                        className={`flex-1 flex items-center justify-center gap-2 h-11 rounded-xl border cursor-pointer transition-all ${
+                          level === item.value
+                            ? "border-primary/50 bg-primary/5 text-primary"
+                            : "border-border/40 hover:border-border/60"
+                        }`}
+                      >
+                        <RadioGroupItem value={item.value} id={`level-${item.value}`} className="sr-only" />
+                        <span>{item.icon}</span>
+                        <span className="text-sm font-medium">{item.label}</span>
+                      </label>
+                    ))}
+                  </RadioGroup>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button variant="outline" onClick={() => setStep("template")} className="h-12 rounded-xl border-border/50 px-6">
+                  ← 返回选择
+                </Button>
+                <Button className="flex-1 h-12 rounded-xl glow-primary font-medium text-base" onClick={() => setStep("dialogue")}>
+                  下一步：了解你 →
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === "dialogue" && (
+            <div className="space-y-6">
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-bold gradient-text mb-3">先聊几个问题</h2>
+                <p className="text-muted-foreground">
+                  帮我更好地了解你，才能制定真正适合你的计划
+                </p>
+              </div>
+
+              <div className="flex justify-center gap-2 mb-6">
+                {DIALOGUE_QUESTIONS.map((q, i) => (
+                  <button
+                    key={q.id}
+                    onClick={() => setDialogueIndex(i)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all ${
+                      i === dialogueIndex
+                        ? "bg-primary/10 border border-primary/30 text-primary font-medium"
+                        : dialogueAnswers[q.id]?.trim()
+                          ? "bg-green-500/5 border border-green-500/20 text-green-400/80"
+                          : "bg-card/40 border border-border/30 text-muted-foreground"
+                    }`}
+                  >
+                    <span>{q.icon}</span>
+                    <span className="hidden sm:inline">{q.title}</span>
+                    {dialogueAnswers[q.id]?.trim() && <span className="text-xs">✓</span>}
+                  </button>
+                ))}
+              </div>
+
+              <div className="glass-card rounded-xl p-6 space-y-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center border border-primary/10">
+                    <span className="text-xl">{currentQ.icon}</span>
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold">{currentQ.question}</h3>
+                    <p className="text-xs text-muted-foreground/70 mt-0.5">{currentQ.hint}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {currentQ.presets.map((preset) => {
+                    const currentVal = dialogueAnswers[currentQ.id] || "";
+                    const isSelected = currentVal.startsWith(preset);
+                    return (
+                      <button
+                        key={preset}
+                        onClick={() => {
+                          if (isSelected) {
+                            setDialogueAnswers({ ...dialogueAnswers, [currentQ.id]: "" });
+                          } else {
+                            setDialogueAnswers({ ...dialogueAnswers, [currentQ.id]: preset });
+                          }
+                        }}
+                        className={`px-3 py-2 rounded-xl text-sm transition-all border ${
+                          isSelected
+                            ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                            : "bg-card/50 border-border/30 text-muted-foreground hover:border-border/60 hover:text-foreground"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <Textarea
+                  placeholder={currentQ.placeholder}
+                  value={
+                    currentQ.presets.includes(dialogueAnswers[currentQ.id] || "")
+                      ? ""
+                      : (dialogueAnswers[currentQ.id] || "")
+                  }
+                  onChange={(e) => {
+                    const presetMatch = currentQ.presets.find((p) =>
+                      (dialogueAnswers[currentQ.id] || "").startsWith(p)
+                    );
+                    if (presetMatch && e.target.value) {
+                      setDialogueAnswers({
+                        ...dialogueAnswers,
+                        [currentQ.id]: presetMatch + "：" + e.target.value,
+                      });
+                    } else {
+                      setDialogueAnswers({
+                        ...dialogueAnswers,
+                        [currentQ.id]: e.target.value,
+                      });
+                    }
+                  }}
+                  rows={2}
+                  className="rounded-xl bg-background/50 border-border/40 focus:border-primary/50 resize-none text-sm"
+                />
+
+                <div className="flex items-center justify-between pt-1">
+                  <p className="text-xs text-muted-foreground/50">
+                    {dialogueIndex + 1} / {DIALOGUE_QUESTIONS.length}
+                  </p>
+                  <div className="flex gap-2">
+                    {dialogueIndex > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDialogueIndex(dialogueIndex - 1)}
+                      >
+                        ← 上一题
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={handleDialogueNext}
+                      disabled={!dialogueAnswers[currentQ.id]?.trim()}
+                    >
+                      {dialogueIndex < DIALOGUE_QUESTIONS.length - 1
+                        ? "下一题 →"
+                        : "生成计划 →"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button variant="outline" onClick={() => setStep("customize")} className="h-10 rounded-xl border-border/50 px-4 text-sm">
+                  ← 修改参数
+                </Button>
+                {allAnswered && (
+                  <Button className="flex-1 h-10 rounded-xl glow-primary font-medium" onClick={handleGenerate}>
+                    跳到生成 →
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {step === "generating" && <GeneratingView isBook={!!uploadedFile} />}
+
+          {step === "preview" && generatedPlan && (
+            <div className="space-y-6">
+              <div className="text-center mb-8">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-green-500/10 border border-green-500/20 mb-4">
+                  <span className="text-3xl">✅</span>
+                </div>
+                <h2 className="text-3xl font-bold gradient-text mb-3">
+                  {generatedPlan.plan.plan_title}
+                </h2>
+                <p className="text-muted-foreground">
+                  共 {generatedPlan.plan.stages.length} 个阶段 · {weeks} 周 · 每天 {hours[0]} 小时
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {generatedPlan.plan.stages.map((stage, i) => (
+                  <div key={i} className="glass-card rounded-xl p-5">
+                    <div className="flex items-start gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center text-sm font-bold text-primary border border-primary/10 shrink-0">
+                        {i + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <h3 className="font-semibold">{stage.title}</h3>
+                          <span className="text-xs text-muted-foreground/70 shrink-0 ml-2">
+                            {stage.estimated_days} 天
+                          </span>
+                        </div>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          {stage.description}
+                        </p>
+                        {stage.core_output && (
+                          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-green-500/5 border border-green-500/10 mb-2">
+                            <span className="text-xs shrink-0 mt-0.5">🏁</span>
+                            <span className="text-xs text-green-400/80">产出: {stage.core_output}</span>
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-1.5">
+                          {stage.key_topics.map((topic) => (
+                            <Badge key={topic} variant="outline" className="text-xs border-border/30 bg-background/30">
+                              {topic}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  className="h-12 rounded-xl border-border/50 px-6"
+                  onClick={() => {
+                    setGeneratedPlan(null);
+                    setStep("dialogue");
+                    setDialogueIndex(0);
+                  }}
+                >
+                  重新生成
+                </Button>
+                <Button
+                  className="flex-1 h-12 rounded-xl glow-primary font-medium text-base"
+                  onClick={() => router.push(`/plan/${generatedPlan.planId}`)}
+                >
+                  确认并开始学习 →
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+const GENERATING_STEPS = [
+  { icon: "🔍", text: "分析学习目标和你的背景...", duration: 3000 },
+  { icon: "🧩", text: "拆解知识体系...", duration: 5000 },
+  { icon: "📐", text: "规划实操优先的学习路线...", duration: 8000 },
+  { icon: "🌍", text: "收集真实案例...", duration: 12000 },
+  { icon: "📚", text: "编排学习内容...", duration: 20000 },
+  { icon: "❓", text: "设计思考题...", duration: 25000 },
+  { icon: "🔧", text: "搜索学习资源...", duration: 30000 },
+  { icon: "✨", text: "即将完成...", duration: 60000 },
+];
+
+const BOOK_GENERATING_STEPS = [
+  { icon: "📖", text: "解析书籍内容...", duration: 3000 },
+  { icon: "📑", text: "分析章节结构...", duration: 6000 },
+  { icon: "🧩", text: "提取核心知识点...", duration: 10000 },
+  { icon: "📐", text: "规划阶段化学习路线...", duration: 15000 },
+  { icon: "✍️", text: "编写学习导读...", duration: 25000 },
+  { icon: "❓", text: "设计检测题...", duration: 35000 },
+  { icon: "✨", text: "即将完成...", duration: 60000 },
+];
+
+function GeneratingView({ isBook = false }: { isBook?: boolean }) {
+  const steps = isBook ? BOOK_GENERATING_STEPS : GENERATING_STEPS;
+  const [elapsed, setElapsed] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const startRef = useRef(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const diff = now - startRef.current;
+      setElapsed(Math.floor(diff / 1000));
+      const p = Math.min(95, (1 - Math.exp(-diff / 40000)) * 100);
+      setProgress(p);
+    }, 300);
+    return () => clearInterval(timer);
+  }, []);
+
+  const currentStep = steps.reduce(
+    (acc, s, i) => (elapsed * 1000 >= s.duration ? i : acc),
+    0
+  );
+
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+
+  return (
+    <div className="flex flex-col items-center justify-center py-16 space-y-10">
+      <div className="relative w-32 h-32">
+        <svg className="w-full h-full -rotate-90" viewBox="0 0 128 128">
+          <circle cx="64" cy="64" r="56" fill="none" stroke="currentColor" strokeWidth="4" className="text-border/20" />
+          <circle
+            cx="64" cy="64" r="56" fill="none" stroke="url(#progressGrad)" strokeWidth="4"
+            strokeLinecap="round"
+            strokeDasharray={`${2 * Math.PI * 56}`}
+            strokeDashoffset={`${2 * Math.PI * 56 * (1 - progress / 100)}`}
+            className="transition-all duration-500 ease-out"
+          />
+          <defs>
+            <linearGradient id="progressGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="hsl(var(--primary))" />
+              <stop offset="100%" stopColor="hsl(var(--chart-2))" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-2xl font-bold text-primary">{Math.round(progress)}%</span>
+        </div>
+      </div>
+
+      <div className="text-center space-y-3 max-w-sm">
+        <h2 className="text-2xl font-bold gradient-text">
+          {isBook ? "AI 正在解析书籍并生成学习计划" : "AI 正在为你定制学习计划"}
+        </h2>
+        <p className="text-muted-foreground/80 text-sm">
+          {minutes > 0 ? `${minutes}分${seconds.toString().padStart(2, "0")}秒` : `${seconds}秒`}
+        </p>
+      </div>
+
+      <div className="w-full max-w-xs space-y-2.5">
+        {steps.slice(0, Math.min(currentStep + 2, steps.length)).map((s, i) => {
+          const isDone = i < currentStep;
+          const isCurrent = i === currentStep;
+          return (
+            <div
+              key={i}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-500 ${
+                isCurrent
+                  ? "glass-card bg-primary/5"
+                  : isDone
+                    ? "opacity-50"
+                    : "opacity-30"
+              }`}
+            >
+              <span className="text-base">{isDone ? "✅" : s.icon}</span>
+              <span className={`text-sm ${isCurrent ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                {s.text}
+              </span>
+              {isCurrent && (
+                <div className="ml-auto flex gap-1">
+                  {[0, 1, 2].map((j) => (
+                    <div key={j} className="w-1 h-1 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${j * 0.15}s` }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-muted-foreground/40 max-w-xs text-center">
+        {isBook ? "解析书籍内容可能需要 1-2 分钟" : "首次生成可能需要 30-60 秒，取决于 AI 服务响应速度"}
+      </p>
+    </div>
+  );
+}
