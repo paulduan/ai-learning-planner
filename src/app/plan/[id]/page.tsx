@@ -449,6 +449,12 @@ export default function PlanDashboard() {
           >
             📤 导出中心
           </button>
+          <button
+            className="w-full text-left px-3 py-2 rounded-lg text-xs text-white/50 hover:text-white/80 hover:bg-white/5 transition-all"
+            onClick={() => router.push(`/plan/${planId}/interview`)}
+          >
+            🎙️ 模拟面试
+          </button>
 
           <div className="h-px bg-white/5 my-2" />
           <button
