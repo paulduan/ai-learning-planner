@@ -3,6 +3,8 @@ import { generatePlanFromBook, extractConcepts, generateStageProject } from "@/l
 import { createPlan, createStage, updatePlan, getConfig, createConcept, createRelation, createStageProject, getStagesByPlan } from "@/db/queries";
 import { PDFParse } from "pdf-parse";
 
+export const maxDuration = 120;
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();

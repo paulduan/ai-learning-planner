@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getStage, createAssessment, updateStage, unlockNextStage, checkPlanCompletion, createMasteryProfile, createReviewSchedulesForStage, getPlan, getAssessmentsByStage } from "@/db/queries";
+import { getStage, createAssessment, updateStage, unlockNextStage, checkPlanCompletion, createMasteryProfile, createReviewSchedulesForStage, getPlan, getAssessmentsByStage, getChatHistory } from "@/db/queries";
 import { assessLearning, analyzeMastery, generateStageProject, regenerateAssessmentQuestions } from "@/lib/ai";
+import type { AssessmentQuestionInput } from "@/lib/ai";
 
 export async function POST(
   request: Request,
@@ -17,14 +18,23 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { input_text, answers } = body;
+  const { input_text, answers, structured_answers } = body;
 
+  const hasStructured = structured_answers?.length > 0;
   const hasAnswers = answers?.length > 0;
-  const combinedText = hasAnswers
-    ? answers.map((a: { question: string; answer: string }, i: number) => `问题${i + 1}: ${a.question}\n回答: ${a.answer}`).join("\n\n")
-    : input_text;
 
-  if (!combinedText || combinedText.trim().length < 50) {
+  let combinedText: string;
+  if (hasStructured) {
+    combinedText = (structured_answers as AssessmentQuestionInput[])
+      .map((q: AssessmentQuestionInput, i: number) => `问题${i + 1} [${q.type}]: ${q.question}\n回答: ${q.user_answer}`)
+      .join("\n\n");
+  } else if (hasAnswers) {
+    combinedText = answers.map((a: { question: string; answer: string }, i: number) => `问题${i + 1}: ${a.question}\n回答: ${a.answer}`).join("\n\n");
+  } else {
+    combinedText = input_text || "";
+  }
+
+  if (!combinedText || combinedText.trim().length < 20) {
     return NextResponse.json(
       { error: "请完整回答所有问题" },
       { status: 400 }
@@ -38,12 +48,13 @@ export async function POST(
       learning_objectives: stage.learning_objectives || [],
       user_input: combinedText,
       questions: stage.assessment_questions || [],
+      structured_questions: hasStructured ? structured_answers : undefined,
       answers: hasAnswers ? answers : undefined,
     });
 
     const assessmentId = createAssessment({
       stage_id: id,
-      type: hasAnswers ? "qa" : "text",
+      type: hasStructured ? "structured" : hasAnswers ? "qa" : "text",
       input_text: combinedText,
       score_overall: result.score_overall,
       score_coverage: result.score_coverage,
@@ -53,6 +64,7 @@ export async function POST(
       feedback: result.feedback,
       missing_topics: result.missing_topics,
       suggestions: result.suggestions,
+      per_question_results: result.per_question_results,
     });
 
     // Create mastery profile (non-blocking)
@@ -153,12 +165,16 @@ export async function PATCH(
   }
 
   try {
+    const chatHistory = getChatHistory(id);
+    const chatMessages = chatHistory.map(m => ({ role: m.role, content: m.content }));
+
     const questions = await regenerateAssessmentQuestions({
       stage_title: stage.title,
       key_topics: stage.key_topics,
       learning_objectives: stage.learning_objectives || [],
       stage_description: stage.description || "",
       summary_text: stage.summary_text || "",
+      chat_history: chatMessages.length > 0 ? chatMessages : undefined,
     });
 
     updateStage(id, { assessment_questions: questions } as unknown as import("@/db/queries").Stage);

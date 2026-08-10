@@ -81,6 +81,20 @@ export interface Resource {
   verified: boolean;
 }
 
+export interface AssessmentSuggestion {
+  title: string;
+  url: string;
+  description: string;
+}
+
+export interface PerQuestionResult {
+  question_index: number;
+  question_text: string;
+  is_correct: boolean;
+  score: number;
+  feedback: string;
+}
+
 export interface Assessment {
   id: string;
   stage_id: string;
@@ -93,7 +107,8 @@ export interface Assessment {
   passed: boolean;
   feedback: string;
   missing_topics: string[];
-  suggestions: string[];
+  suggestions: (string | AssessmentSuggestion)[];
+  per_question_results: PerQuestionResult[];
   attempt_number: number;
   created_at: string;
 }
@@ -475,7 +490,8 @@ export function createAssessment(assessment: {
   passed: boolean;
   feedback: string;
   missing_topics: string[];
-  suggestions: string[];
+  suggestions: (string | AssessmentSuggestion)[];
+  per_question_results?: PerQuestionResult[];
 }): string {
   const db = getDb();
   const existing = db.prepare(
@@ -486,8 +502,8 @@ export function createAssessment(assessment: {
   const id = uuidv4();
 
   db.prepare(
-    `INSERT INTO assessment (id, stage_id, type, input_text, score_overall, score_coverage, score_depth, score_accuracy, passed, feedback, missing_topics, suggestions, attempt_number)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO assessment (id, stage_id, type, input_text, score_overall, score_coverage, score_depth, score_accuracy, passed, feedback, missing_topics, suggestions, per_question_results, attempt_number)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     assessment.stage_id,
@@ -501,6 +517,7 @@ export function createAssessment(assessment: {
     assessment.feedback,
     JSON.stringify(assessment.missing_topics),
     JSON.stringify(assessment.suggestions),
+    JSON.stringify(assessment.per_question_results || []),
     attemptNumber
   );
   return id;
@@ -516,7 +533,8 @@ export function getAssessmentsByStage(stageId: string): Assessment[] {
     ...row,
     passed: row.passed === 1,
     missing_topics: parseJsonField(row.missing_topics) as string[],
-    suggestions: parseJsonField(row.suggestions) as string[],
+    suggestions: parseJsonField(row.suggestions) as (string | AssessmentSuggestion)[],
+    per_question_results: parseJsonField(row.per_question_results) as PerQuestionResult[],
   })) as unknown as Assessment[];
 }
 

@@ -35,6 +35,12 @@ export default function HomePage() {
     load();
   }, []);
 
+  useEffect(() => {
+    if (activePlan?.plan) {
+      router.push(`/plan/${activePlan.plan.id}`);
+    }
+  }, [activePlan, router]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -113,8 +119,6 @@ export default function HomePage() {
   }
 
   if (activePlan?.plan) {
-    const { plan } = activePlan;
-    router.push(`/plan/${plan.id}`);
     return (
       <div className="flex items-center justify-center min-h-screen">
         <span className="text-sm text-muted-foreground animate-pulse">跳转中...</span>

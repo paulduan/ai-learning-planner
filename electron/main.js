@@ -202,7 +202,7 @@ function loadAppUrl() {
 
 app.whenReady().then(async () => {
   log(`App ready (dev=${IS_DEV}, packaged=${app.isPackaged})`);
-  killPortProcess();
+  if (!IS_DEV) killPortProcess();
   createWindow();
 
   try {
@@ -232,7 +232,7 @@ app.on("window-all-closed", () => {
     }
     serverProcess = null;
   }
-  killPortProcess();
+  if (!IS_DEV) killPortProcess();
   app.quit();
 });
 
@@ -249,5 +249,5 @@ app.on("before-quit", () => {
     }
     serverProcess = null;
   }
-  killPortProcess();
+  if (!IS_DEV) killPortProcess();
 });

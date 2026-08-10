@@ -5,8 +5,16 @@ import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+
+interface StructuredQuestion {
+  type: "choice" | "fill" | "true_false" | "short_answer";
+  question: string;
+  options?: string[];
+  correct_answer?: string;
+}
 
 interface StageData {
   id: string;
@@ -14,7 +22,21 @@ interface StageData {
   key_topics: string[];
   order_index: number;
   status: string;
-  assessment_questions?: string[];
+  assessment_questions?: (string | StructuredQuestion)[];
+}
+
+interface PerQuestionResult {
+  question_index: number;
+  question_text: string;
+  is_correct: boolean;
+  score: number;
+  feedback: string;
+}
+
+interface Suggestion {
+  title: string;
+  url: string;
+  description: string;
 }
 
 interface AssessmentResult {
@@ -25,10 +47,30 @@ interface AssessmentResult {
   passed: boolean;
   feedback: string;
   missing_topics: string[];
-  suggestions: string[];
+  suggestions: (string | Suggestion)[];
+  per_question_results?: PerQuestionResult[];
 }
 
 type ViewState = "questions" | "assessing" | "result";
+
+function normalizeQuestion(q: string | StructuredQuestion): StructuredQuestion {
+  if (typeof q === "string") {
+    return { type: "short_answer", question: q };
+  }
+  return q;
+}
+
+function normalizeSuggestion(s: string | Suggestion): Suggestion {
+  if (typeof s === "string") {
+    const urlMatch = s.match(/https?:\/\/[^\s)]+/);
+    return {
+      title: s.replace(/https?:\/\/[^\s)]+/g, "").trim(),
+      url: urlMatch?.[0] || "",
+      description: s,
+    };
+  }
+  return s;
+}
 
 export default function AssessPage() {
   const router = useRouter();
@@ -95,23 +137,23 @@ export default function AssessPage() {
     loadData();
   }, [loadData]);
 
-  const questions = stage?.assessment_questions?.length
+  const rawQuestions = stage?.assessment_questions?.length
     ? stage.assessment_questions
     : stage?.key_topics.map((t) => `请解释你对「${t}」的理解，以及它在实际项目中是如何被使用的？`) || [];
 
+  const questions: StructuredQuestion[] = rawQuestions.map(normalizeQuestion);
   const currentQ = questions[currentQIndex];
   const answeredCount = Object.values(answers).filter((a) => a?.trim()).length;
   const allAnswered = answeredCount >= questions.length;
 
   async function handleSubmit() {
-    const answerPairs = questions.map((q, i) => ({
-      question: q,
-      answer: answers[i] || "",
+    const structuredAnswers = questions.map((q, i) => ({
+      type: q.type,
+      question: q.question,
+      options: q.options,
+      correct_answer: q.correct_answer,
+      user_answer: answers[i] || "",
     }));
-
-    const combinedText = answerPairs
-      .map((a, i) => `问题${i + 1}: ${a.question}\n回答: ${a.answer}`)
-      .join("\n\n");
 
     setViewState("assessing");
 
@@ -119,10 +161,7 @@ export default function AssessPage() {
       const res = await fetch(`/api/stage/${stageId}/assess`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          input_text: combinedText,
-          answers: answerPairs,
-        }),
+        body: JSON.stringify({ structured_answers: structuredAnswers }),
       });
 
       if (!res.ok) {
@@ -199,11 +238,9 @@ export default function AssessPage() {
                 <div className="flex items-start gap-3 mb-3">
                   <span className="text-xl">💡</span>
                   <div className="flex-1">
-                    <h3 className="font-semibold mb-1">
-                      回答以下思考题
-                    </h3>
+                    <h3 className="font-semibold mb-1">回答以下检测题</h3>
                     <p className="text-sm text-muted-foreground">
-                      用自己的话回答，展示你的理解深度。不要复制粘贴。
+                      包含选择题、判断题、填空题和简答题，展示你的学习成果
                     </p>
                   </div>
                   <Button
@@ -217,7 +254,7 @@ export default function AssessPage() {
                   </Button>
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                  {questions.map((_, i) => (
+                  {questions.map((q, i) => (
                     <button
                       key={i}
                       onClick={() => setCurrentQIndex(i)}
@@ -228,6 +265,7 @@ export default function AssessPage() {
                             ? "bg-green-500/10 text-green-400 border border-green-500/20"
                             : "bg-card/50 text-muted-foreground border border-border/30"
                       }`}
+                      title={questionTypeLabel(q.type)}
                     >
                       {i + 1}
                     </button>
@@ -235,58 +273,64 @@ export default function AssessPage() {
                 </div>
               </div>
 
-              <div className="glass-card rounded-xl p-6 space-y-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0">
-                    {currentQIndex + 1}
+              {currentQ && (
+                <div className="glass-card rounded-xl p-6 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0">
+                      {currentQIndex + 1}
+                    </div>
+                    <div className="flex-1">
+                      <Badge variant="outline" className="text-[10px] mb-2 font-normal">
+                        {questionTypeLabel(currentQ.type)}
+                      </Badge>
+                      <p className="text-base font-medium leading-relaxed">{currentQ.question}</p>
+                    </div>
                   </div>
-                  <p className="text-base font-medium leading-relaxed pt-1">{currentQ}</p>
-                </div>
 
-                <Textarea
-                  placeholder="写下你的理解..."
-                  value={answers[currentQIndex] || ""}
-                  onChange={(e) =>
-                    setAnswers({ ...answers, [currentQIndex]: e.target.value })
-                  }
-                  className="min-h-[200px] resize-y rounded-xl bg-background/50 border-border/40"
-                />
+                  <QuestionInput
+                    question={currentQ}
+                    value={answers[currentQIndex] || ""}
+                    onChange={(val) => setAnswers({ ...answers, [currentQIndex]: val })}
+                  />
 
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">
-                    {(answers[currentQIndex] || "").length} 字
-                  </span>
-                  <div className="flex gap-2">
-                    {currentQIndex > 0 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setCurrentQIndex(currentQIndex - 1)}
-                      >
-                        ← 上一题
-                      </Button>
-                    )}
-                    {currentQIndex < questions.length - 1 ? (
-                      <Button
-                        size="sm"
-                        onClick={() => setCurrentQIndex(currentQIndex + 1)}
-                        disabled={!answers[currentQIndex]?.trim()}
-                      >
-                        下一题 →
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        onClick={handleSubmit}
-                        disabled={!allAnswered}
-                        className="glow-primary"
-                      >
-                        提交全部答案
-                      </Button>
-                    )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">
+                      {currentQ.type === "short_answer"
+                        ? `${(answers[currentQIndex] || "").length} 字`
+                        : answers[currentQIndex]?.trim() ? "✓ 已答" : "未答"}
+                    </span>
+                    <div className="flex gap-2">
+                      {currentQIndex > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setCurrentQIndex(currentQIndex - 1)}
+                        >
+                          ← 上一题
+                        </Button>
+                      )}
+                      {currentQIndex < questions.length - 1 ? (
+                        <Button
+                          size="sm"
+                          onClick={() => setCurrentQIndex(currentQIndex + 1)}
+                          disabled={!answers[currentQIndex]?.trim()}
+                        >
+                          下一题 →
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={handleSubmit}
+                          disabled={!allAnswered}
+                          className="glow-primary"
+                        >
+                          提交全部答案
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {allAnswered && (
                 <Button
@@ -328,6 +372,7 @@ export default function AssessPage() {
 
           {viewState === "result" && result && (
             <div className="space-y-6">
+              {/* Overall Score Card */}
               <div className={`glass-card rounded-xl overflow-hidden ${
                 result.passed ? "border-green-500/30" : "border-amber-500/30"
               }`}>
@@ -350,89 +395,258 @@ export default function AssessPage() {
                     <ScoreBar label="理解深度" score={result.score_depth} />
                     <ScoreBar label="表达准确" score={result.score_accuracy} />
                   </div>
+                </div>
+              </div>
 
-                  <div className="h-px bg-border/30" />
-
-                  <div>
-                    <h3 className="font-semibold mb-2 flex items-center gap-2">
-                      <span>📝</span> 评估反馈
-                    </h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {result.feedback}
-                    </p>
-                  </div>
-
-                  {!result.passed && result.missing_topics.length > 0 && (
-                    <div>
-                      <h3 className="font-semibold mb-2 flex items-center gap-2">
-                        <span>⚠️</span> 需要加强的知识点
-                      </h3>
-                      <div className="flex flex-wrap gap-2">
-                        {result.missing_topics.map((topic) => (
-                          <Badge key={topic} className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                            {topic}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {!result.passed && result.suggestions.length > 0 && (
-                    <div>
-                      <h3 className="font-semibold mb-2 flex items-center gap-2">
-                        <span>📎</span> 推荐学习资料
-                      </h3>
-                      <div className="space-y-2">
-                        {result.suggestions.map((suggestion, i) => (
-                          <div
-                            key={i}
-                            className="text-sm text-muted-foreground p-3.5 rounded-xl bg-background/30 border border-border/20"
-                          >
-                            {suggestion}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-3 pt-2">
-                    {result.passed ? (
-                      <Button
-                        className="flex-1 h-12 rounded-xl glow-primary font-medium"
-                        onClick={() => router.push(`/plan/${planId}`)}
+              {/* Per-Question Results */}
+              {result.per_question_results && result.per_question_results.length > 0 && (
+                <div className="glass-card rounded-xl p-6 space-y-4">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <span>📝</span> 逐题评估
+                  </h3>
+                  <div className="space-y-3">
+                    {result.per_question_results.map((pqr, i) => (
+                      <div
+                        key={i}
+                        className={`p-4 rounded-xl border ${
+                          pqr.is_correct
+                            ? "bg-green-500/5 border-green-500/20"
+                            : "bg-red-500/5 border-red-500/20"
+                        }`}
                       >
-                        返回关卡地图 →
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          variant="outline"
-                          className="h-12 rounded-xl border-border/50 px-6"
-                          onClick={() => router.push(`/plan/${planId}/stage/${stageId}`)}
-                        >
-                          ← 回去复习
-                        </Button>
-                        <Button
-                          className="flex-1 h-12 rounded-xl glow-primary font-medium"
-                          onClick={() => {
-                            setViewState("questions");
-                            setResult(null);
-                            setAnswers({});
-                            setCurrentQIndex(0);
-                          }}
-                        >
-                          重新答题
-                        </Button>
-                      </>
-                    )}
+                        <div className="flex items-start gap-3">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                            pqr.is_correct ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"
+                          }`}>
+                            {pqr.is_correct ? "✓" : "✗"}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-medium">第 {pqr.question_index + 1} 题</span>
+                              <span className={`text-xs font-medium ${
+                                pqr.score >= 80 ? "text-green-400" : pqr.score >= 60 ? "text-amber-400" : "text-red-400"
+                              }`}>
+                                {Math.round(pqr.score)} 分
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mb-2 line-clamp-1">
+                              {pqr.question_text}
+                            </p>
+                            <p className="text-sm text-muted-foreground leading-relaxed">
+                              {pqr.feedback}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
+              )}
+
+              {/* Overall Feedback */}
+              <div className="glass-card rounded-xl p-6 space-y-4">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <span>💬</span> 总体反馈
+                </h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {result.feedback}
+                </p>
+
+                {!result.passed && result.missing_topics.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <span>⚠️</span> 需要加强的知识点
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {result.missing_topics.map((topic) => (
+                        <Badge key={topic} className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          {topic}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Suggestions with clickable links */}
+              {result.suggestions && result.suggestions.length > 0 && (
+                <div className="glass-card rounded-xl p-6 space-y-4">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <span>📎</span> 推荐学习资料
+                  </h3>
+                  <div className="space-y-2">
+                    {result.suggestions.map((rawSuggestion, i) => {
+                      const suggestion = normalizeSuggestion(rawSuggestion);
+                      return (
+                        <div
+                          key={i}
+                          className="p-3.5 rounded-xl bg-background/30 border border-border/20 hover:border-primary/30 transition-colors"
+                        >
+                          {suggestion.url ? (
+                            <a
+                              href={suggestion.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-start gap-2 group"
+                            >
+                              <span className="text-primary mt-0.5 shrink-0">🔗</span>
+                              <div className="min-w-0">
+                                <span className="text-sm font-medium text-primary group-hover:underline">
+                                  {suggestion.title || suggestion.url}
+                                </span>
+                                {suggestion.description && suggestion.description !== suggestion.title && (
+                                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                                    {suggestion.description}
+                                  </p>
+                                )}
+                              </div>
+                              <span className="text-muted-foreground/50 text-xs shrink-0 mt-0.5">↗</span>
+                            </a>
+                          ) : (
+                            <div className="flex items-start gap-2">
+                              <span className="text-muted-foreground mt-0.5 shrink-0">📄</span>
+                              <span className="text-sm text-muted-foreground">
+                                {suggestion.description || suggestion.title}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                {result.passed ? (
+                  <Button
+                    className="flex-1 h-12 rounded-xl glow-primary font-medium"
+                    onClick={() => router.push(`/plan/${planId}`)}
+                  >
+                    返回关卡地图 →
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="h-12 rounded-xl border-border/50 px-6"
+                      onClick={() => router.push(`/plan/${planId}/stage/${stageId}`)}
+                    >
+                      ← 回去复习
+                    </Button>
+                    <Button
+                      className="flex-1 h-12 rounded-xl glow-primary font-medium"
+                      onClick={() => {
+                        setViewState("questions");
+                        setResult(null);
+                        setAnswers({});
+                        setCurrentQIndex(0);
+                      }}
+                    >
+                      重新答题
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           )}
         </div>
       </main>
     </div>
+  );
+}
+
+function questionTypeLabel(type: string): string {
+  switch (type) {
+    case "choice": return "选择题";
+    case "fill": return "填空题";
+    case "true_false": return "判断题";
+    case "short_answer": return "简答题";
+    default: return "题目";
+  }
+}
+
+function QuestionInput({
+  question,
+  value,
+  onChange,
+}: {
+  question: StructuredQuestion;
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  if (question.type === "choice" && question.options?.length) {
+    return (
+      <div className="space-y-2">
+        {question.options.map((opt, i) => {
+          const label = String.fromCharCode(65 + i);
+          const isSelected = value === opt;
+          return (
+            <button
+              key={i}
+              onClick={() => onChange(opt)}
+              className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-start gap-3 ${
+                isSelected
+                  ? "bg-primary/10 border-primary/40 text-foreground"
+                  : "bg-background/30 border-border/30 text-muted-foreground hover:border-border/60"
+              }`}
+            >
+              <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                isSelected ? "bg-primary text-primary-foreground" : "bg-card/80 border border-border/50"
+              }`}>
+                {label}
+              </span>
+              <span className="text-sm pt-0.5">{opt}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (question.type === "true_false") {
+    return (
+      <div className="flex gap-3">
+        {["对", "错"].map((opt) => {
+          const isSelected = value === opt;
+          return (
+            <button
+              key={opt}
+              onClick={() => onChange(opt)}
+              className={`flex-1 p-4 rounded-xl border text-center font-medium transition-all ${
+                isSelected
+                  ? "bg-primary/10 border-primary/40 text-foreground"
+                  : "bg-background/30 border-border/30 text-muted-foreground hover:border-border/60"
+              }`}
+            >
+              <span className="text-2xl mb-1 block">{opt === "对" ? "✅" : "❌"}</span>
+              <span className="text-sm">{opt}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (question.type === "fill") {
+    return (
+      <Input
+        placeholder="填写答案..."
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-12 rounded-xl bg-background/50 border-border/40 text-base"
+      />
+    );
+  }
+
+  return (
+    <Textarea
+      placeholder="写下你的理解..."
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="min-h-[200px] resize-y rounded-xl bg-background/50 border-border/40"
+    />
   );
 }
 

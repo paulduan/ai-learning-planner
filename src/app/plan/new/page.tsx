@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { PLAN_TEMPLATES } from "@/config/templates";
 
-type Step = "template" | "book" | "customize" | "dialogue" | "generating" | "preview";
+type Step = "template" | "book" | "code" | "customize" | "dialogue" | "generating" | "preview";
 
 interface GeneratedStage {
   title: string;
@@ -93,6 +93,10 @@ export default function NewPlanPage() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadDragging, setUploadDragging] = useState(false);
 
+  const [projectPath, setProjectPath] = useState("");
+  const [projectValidated, setProjectValidated] = useState(false);
+  const [projectValidating, setProjectValidating] = useState(false);
+
   const [generatedPlan, setGeneratedPlan] = useState<{
     planId: string;
     plan: { plan_title: string; stages: GeneratedStage[] };
@@ -118,7 +122,7 @@ export default function NewPlanPage() {
   }
 
   async function handleGenerate() {
-    if (!uploadedFile && !goal.trim()) {
+    if (!uploadedFile && !projectPath.trim() && !goal.trim()) {
       toast.error("请输入学习目标");
       return;
     }
@@ -129,7 +133,21 @@ export default function NewPlanPage() {
     try {
       let res: Response;
 
-      if (uploadedFile) {
+      if (projectPath.trim()) {
+        res = await fetch("/api/plan/generate-from-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_path: projectPath.trim(),
+            duration_weeks: weeks,
+            daily_hours: hours[0],
+            skill_level: level,
+            motivation: dialogueAnswers.motivation,
+            background: dialogueAnswers.background,
+            expected_outcome: dialogueAnswers.outcome,
+          }),
+        });
+      } else if (uploadedFile) {
         const formData = new FormData();
         formData.append("file", uploadedFile);
         formData.append("duration_weeks", String(weeks));
@@ -160,8 +178,15 @@ export default function NewPlanPage() {
       }
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "生成失败");
+        let errorMsg = "生成失败";
+        try {
+          const err = await res.json();
+          errorMsg = err.error || errorMsg;
+        } catch {
+          const text = await res.text().catch(() => "");
+          if (text) errorMsg = `服务端错误: ${text.slice(0, 100)}`;
+        }
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();
@@ -195,9 +220,11 @@ export default function NewPlanPage() {
           </Button>
           <h1 className="text-lg font-semibold">创建学习计划</h1>
           <div className="ml-auto flex gap-1.5">
-            {(uploadedFile
-              ? ["template", "book", "customize", "dialogue", "generating", "preview"]
-              : ["template", "customize", "dialogue", "generating", "preview"]
+            {(projectPath.trim()
+              ? ["template", "code", "customize", "dialogue", "generating", "preview"]
+              : uploadedFile
+                ? ["template", "book", "customize", "dialogue", "generating", "preview"]
+                : ["template", "customize", "dialogue", "generating", "preview"]
             ).map((s, i, arr) => (
               <div
                 key={s}
@@ -289,6 +316,18 @@ export default function NewPlanPage() {
                   }}
                 >
                   📖 上传书籍
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-12 rounded-xl border-border/50 px-6"
+                  onClick={() => {
+                    setSelectedTemplate(null);
+                    setProjectPath("");
+                    setProjectValidated(false);
+                    setStep("code");
+                  }}
+                >
+                  💻 从代码学习
                 </Button>
               </div>
             </div>
@@ -385,6 +424,118 @@ export default function NewPlanPage() {
             </div>
           )}
 
+          {step === "code" && (
+            <div className="space-y-6">
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-bold gradient-text mb-3">从代码学习</h2>
+                <p className="text-muted-foreground">
+                  输入本地项目路径，AI 会深入分析代码并为你制定学习计划
+                </p>
+              </div>
+
+              <div className="glass-card rounded-xl p-6 space-y-5">
+                <div className="space-y-3">
+                  <Label className="text-base font-medium flex items-center gap-2">
+                    <span className="text-lg">📁</span> 项目路径
+                  </Label>
+                  <div className="flex gap-3">
+                    <Input
+                      placeholder="例：~/projects/my-app 或 /Users/xxx/code/project"
+                      value={projectPath}
+                      onChange={(e) => {
+                        setProjectPath(e.target.value);
+                        setProjectValidated(false);
+                      }}
+                      className="flex-1 h-12 rounded-xl bg-background/50 border-border/40 focus:border-primary/50 font-mono text-sm"
+                    />
+                    <Button
+                      variant="outline"
+                      className="h-12 rounded-xl border-border/50 px-5 shrink-0"
+                      disabled={!projectPath.trim() || projectValidating}
+                      onClick={async () => {
+                        setProjectValidating(true);
+                        try {
+                          const res = await fetch("/api/plan/generate-from-code", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ project_path: projectPath.trim(), validate_only: true }),
+                          });
+                          if (!res.ok) {
+                            const err = await res.json();
+                            toast.error(err.error || "路径无效");
+                            setProjectValidated(false);
+                          } else {
+                            setProjectValidated(true);
+                            const folderName = projectPath.trim().split("/").pop() || projectPath.trim();
+                            setGoal(`深入学习项目「${folderName}」的代码实现`);
+                            toast.success("项目路径有效");
+                          }
+                        } catch {
+                          toast.error("验证失败");
+                          setProjectValidated(false);
+                        } finally {
+                          setProjectValidating(false);
+                        }
+                      }}
+                    >
+                      {projectValidating ? "验证中..." : "验证路径"}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground/70">
+                    支持读取 JS/TS/Go/Python/Java/Rust 等语言的项目代码
+                  </p>
+                </div>
+
+                {projectValidated && (
+                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-500/5 border border-green-500/20">
+                    <span className="text-base">✅</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-green-400">项目路径有效</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 font-mono">{projectPath}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="px-4 py-3 rounded-xl bg-primary/5 border border-primary/10 space-y-2">
+                  <p className="text-sm font-medium flex items-center gap-2">
+                    <span>💡</span> AI 会做什么
+                  </p>
+                  <ul className="text-xs text-muted-foreground space-y-1.5">
+                    <li className="flex items-start gap-2">
+                      <span className="shrink-0 mt-0.5">1.</span>
+                      <span>扫描项目文件结构，识别核心模块</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="shrink-0 mt-0.5">2.</span>
+                      <span>阅读源代码，理解架构设计和实现细节</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="shrink-0 mt-0.5">3.</span>
+                      <span>生成由浅入深的代码学习计划</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="shrink-0 mt-0.5">4.</span>
+                      <span>通过苏格拉底式问答教你理解每一层代码</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button variant="outline" onClick={() => { setProjectPath(""); setProjectValidated(false); setStep("template"); }} className="h-12 rounded-xl border-border/50 px-6">
+                  ← 返回
+                </Button>
+                <Button
+                  className="flex-1 h-12 rounded-xl glow-primary font-medium"
+                  onClick={() => setStep("customize")}
+                  disabled={!projectValidated}
+                >
+                  下一步：设置参数 →
+                </Button>
+              </div>
+            </div>
+          )}
+
           {step === "customize" && (
             <div className="space-y-6">
               <div className="text-center mb-8">
@@ -397,7 +548,18 @@ export default function NewPlanPage() {
                   <Label className="text-base font-medium flex items-center gap-2">
                     <span className="text-lg">🎯</span> 学习目标
                   </Label>
-                  {uploadedFile ? (
+                  {projectPath.trim() ? (
+                    <div className="flex items-center gap-3 h-12 px-4 rounded-xl bg-green-500/5 border border-green-500/20">
+                      <span className="text-base">💻</span>
+                      <span className="text-sm font-medium text-green-400 font-mono truncate">{projectPath}</span>
+                      <button
+                        onClick={() => { setProjectPath(""); setProjectValidated(false); setGoal(""); setStep("code"); }}
+                        className="ml-auto text-xs text-muted-foreground hover:text-foreground shrink-0"
+                      >
+                        更换
+                      </button>
+                    </div>
+                  ) : uploadedFile ? (
                     <div className="flex items-center gap-3 h-12 px-4 rounded-xl bg-green-500/5 border border-green-500/20">
                       <span className="text-base">📗</span>
                       <span className="text-sm font-medium text-green-400">{uploadedFile.name}</span>
@@ -652,7 +814,7 @@ export default function NewPlanPage() {
             </div>
           )}
 
-          {step === "generating" && <GeneratingView isBook={!!uploadedFile} />}
+          {step === "generating" && <GeneratingView isBook={!!uploadedFile} isCode={!!projectPath.trim()} />}
 
           {step === "preview" && generatedPlan && (
             <div className="space-y-6">
@@ -752,8 +914,19 @@ const BOOK_GENERATING_STEPS = [
   { icon: "✨", text: "即将完成...", duration: 60000 },
 ];
 
-function GeneratingView({ isBook = false }: { isBook?: boolean }) {
-  const steps = isBook ? BOOK_GENERATING_STEPS : GENERATING_STEPS;
+const CODE_GENERATING_STEPS = [
+  { icon: "📁", text: "扫描项目文件结构...", duration: 2000 },
+  { icon: "📖", text: "读取源代码文件...", duration: 5000 },
+  { icon: "🔍", text: "分析代码架构和模块...", duration: 10000 },
+  { icon: "🧩", text: "识别设计模式和技术栈...", duration: 15000 },
+  { icon: "📐", text: "规划代码学习路线...", duration: 22000 },
+  { icon: "✍️", text: "编写代码解读导读...", duration: 30000 },
+  { icon: "❓", text: "设计代码理解检测题...", duration: 40000 },
+  { icon: "✨", text: "即将完成...", duration: 60000 },
+];
+
+function GeneratingView({ isBook = false, isCode = false }: { isBook?: boolean; isCode?: boolean }) {
+  const steps = isCode ? CODE_GENERATING_STEPS : isBook ? BOOK_GENERATING_STEPS : GENERATING_STEPS;
   const [elapsed, setElapsed] = useState(0);
   const [progress, setProgress] = useState(0);
   const startRef = useRef(Date.now());
@@ -803,7 +976,7 @@ function GeneratingView({ isBook = false }: { isBook?: boolean }) {
 
       <div className="text-center space-y-3 max-w-sm">
         <h2 className="text-2xl font-bold gradient-text">
-          {isBook ? "AI 正在解析书籍并生成学习计划" : "AI 正在为你定制学习计划"}
+          {isCode ? "AI 正在分析代码并生成学习计划" : isBook ? "AI 正在解析书籍并生成学习计划" : "AI 正在为你定制学习计划"}
         </h2>
         <p className="text-muted-foreground/80 text-sm">
           {minutes > 0 ? `${minutes}分${seconds.toString().padStart(2, "0")}秒` : `${seconds}秒`}
@@ -842,7 +1015,7 @@ function GeneratingView({ isBook = false }: { isBook?: boolean }) {
       </div>
 
       <p className="text-xs text-muted-foreground/40 max-w-xs text-center">
-        {isBook ? "解析书籍内容可能需要 1-2 分钟" : "首次生成可能需要 30-60 秒，取决于 AI 服务响应速度"}
+        {isCode ? "分析代码项目可能需要 1-3 分钟，取决于项目大小" : isBook ? "解析书籍内容可能需要 1-2 分钟" : "首次生成可能需要 30-60 秒，取决于 AI 服务响应速度"}
       </p>
     </div>
   );

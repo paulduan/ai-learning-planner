@@ -154,6 +154,8 @@ function runMigrations(db: Database.Database) {
   safeAddColumn(db, "resource", "search_source", "TEXT DEFAULT 'llm'");
   safeAddColumn(db, "resource", "verified", "INTEGER DEFAULT 0");
 
+  safeAddColumn(db, "assessment", "per_question_results", "TEXT DEFAULT '[]'");
+
   safeAddColumn(db, "learning_plan", "review_enabled", "INTEGER DEFAULT 1");
   safeAddColumn(db, "learning_plan", "adaptive_enabled", "INTEGER DEFAULT 1");
   safeAddColumn(db, "learning_plan", "analytics_enabled", "INTEGER DEFAULT 1");

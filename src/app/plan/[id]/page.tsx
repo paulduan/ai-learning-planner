@@ -793,20 +793,119 @@ export default function PlanDashboard() {
                       </Button>
                     </div>
 
-                    <div>
-                      <h3 className="text-sm font-medium mb-2">AI 阶段笔记</h3>
-                      <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 min-h-[120px]">
-                        {stageNote.ai_summary ? (
-                          stageNote.ai_summary.split("\n").map((line, i) => (
-                            <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-2 last:mb-0">{line}</p>
-                          ))
-                        ) : (
+                    {(() => {
+                      const parsed = tryParseStructuredSummary(stageNote.ai_summary);
+                      if (parsed) {
+                        return (
+                          <div className="space-y-5">
+                            {/* One-line summary */}
+                            <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
+                              <p className="text-sm font-medium text-primary">
+                                📌 {parsed.one_line_summary}
+                              </p>
+                            </div>
+
+                            {/* Core Concepts */}
+                            <div>
+                              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                                <span>🧠</span> 核心概念掌握
+                              </h3>
+                              <div className="grid grid-cols-1 gap-2">
+                                {parsed.core_concepts.map((c, i) => (
+                                  <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-card/30 border border-border/20">
+                                    <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                                      c.mastery === "solid" ? "bg-green-400" :
+                                      c.mastery === "partial" ? "bg-amber-400" : "bg-red-400"
+                                    }`} />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium">{c.name}</span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                                          c.mastery === "solid" ? "bg-green-500/10 text-green-400" :
+                                          c.mastery === "partial" ? "bg-amber-500/10 text-amber-400" : "bg-red-500/10 text-red-400"
+                                        }`}>
+                                          {c.mastery === "solid" ? "掌握" : c.mastery === "partial" ? "部分" : "待加强"}
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-muted-foreground mt-0.5">{c.explanation}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Key Takeaways */}
+                            <div>
+                              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                                <span>💡</span> 关键收获
+                              </h3>
+                              <div className="space-y-1.5">
+                                {parsed.key_takeaways.map((t, i) => (
+                                  <div key={i} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-green-500/5 border border-green-500/10">
+                                    <span className="text-green-400 text-xs mt-0.5">✓</span>
+                                    <p className="text-sm text-muted-foreground">{t}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Open Questions */}
+                            {parsed.open_questions.length > 0 && (
+                              <div>
+                                <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                                  <span>❓</span> 待深入问题
+                                </h3>
+                                <div className="space-y-1.5">
+                                  {parsed.open_questions.map((q, i) => (
+                                    <div key={i} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                                      <span className="text-amber-400 text-xs mt-0.5">?</span>
+                                      <p className="text-sm text-muted-foreground">{q}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Next Actions */}
+                            <div>
+                              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                                <span>🎯</span> 下一步行动
+                              </h3>
+                              <div className="space-y-1.5">
+                                {parsed.next_actions.map((a, i) => (
+                                  <div key={i} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/10">
+                                    <span className="text-blue-400 text-xs mt-0.5">→</span>
+                                    <p className="text-sm text-muted-foreground">{a}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (stageNote.ai_summary) {
+                        return (
+                          <div>
+                            <h3 className="text-sm font-medium mb-2">AI 阶段笔记</h3>
+                            <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 min-h-[120px]">
+                              {stageNote.ai_summary.split("\n").map((line, i) => (
+                                <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-2 last:mb-0">{line}</p>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="px-5 py-8 rounded-xl border border-dashed border-border/30 bg-card/10 text-center">
+                          <span className="text-3xl mb-3 block">📝</span>
                           <p className="text-sm text-muted-foreground/60">
-                            点击「AI 总结本阶段」，根据对话内容自动生成结构化笔记
+                            点击「AI 总结本阶段」，根据对话内容生成可视化学习总结
                           </p>
-                        )}
-                      </div>
-                    </div>
+                        </div>
+                      );
+                    })()}
 
                     <div>
                       <h3 className="text-sm font-medium mb-2">我的整理</h3>
@@ -889,4 +988,25 @@ export default function PlanDashboard() {
       </main>
     </div>
   );
+}
+
+interface StructuredSummaryData {
+  core_concepts: { name: string; explanation: string; mastery: "solid" | "partial" | "weak" }[];
+  key_takeaways: string[];
+  open_questions: string[];
+  next_actions: string[];
+  one_line_summary: string;
+}
+
+function tryParseStructuredSummary(text: string): StructuredSummaryData | null {
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed.core_concepts && parsed.key_takeaways && parsed.one_line_summary) {
+      return parsed as StructuredSummaryData;
+    }
+  } catch {
+    // Not JSON - old markdown format
+  }
+  return null;
 }

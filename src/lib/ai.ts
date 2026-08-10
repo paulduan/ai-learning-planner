@@ -254,6 +254,99 @@ ${contextBlock}
   return object;
 }
 
+export async function generatePlanFromCode(params: {
+  code_content: string;
+  project_name: string;
+  file_tree: string;
+  duration_weeks: number;
+  daily_hours: number;
+  skill_level: string;
+  motivation?: string;
+  background?: string;
+  expected_outcome?: string;
+}): Promise<GeneratedPlan> {
+  const levelMap: Record<string, string> = {
+    beginner: "零基础入门",
+    intermediate: "有一定基础",
+    advanced: "有经验想进阶",
+  };
+
+  const contextBlock = [
+    params.motivation ? `学习动机: ${params.motivation}` : "",
+    params.background ? `当前背景: ${params.background}` : "",
+    params.expected_outcome ? `期望成果: ${params.expected_outcome}` : "",
+  ].filter(Boolean).join("\n");
+
+  const codeContentTruncated = params.code_content.length > 80000
+    ? params.code_content.slice(0, 80000) + "\n\n[... 代码内容过长已截断 ...]"
+    : params.code_content;
+
+  const prompt = `你是一位资深技术导师和代码教练。用户提供了一个代码项目，请你深入分析这个项目的代码，然后基于代码的实际内容，制定一个阶段化的学习计划，帮助学习者系统地理解这个项目。
+
+## 项目信息
+项目名称: ${params.project_name}
+
+### 项目文件结构
+${params.file_tree}
+
+### 代码内容
+${codeContentTruncated}
+
+## 学习者画像
+计划周期: ${params.duration_weeks} 周
+每日可用学习时间: ${params.daily_hours} 小时
+当前水平: ${levelMap[params.skill_level] || params.skill_level}
+${contextBlock}
+
+## 核心要求
+1. **基于代码的实际内容来规划**：阶段划分必须对应代码中的实际模块/层次/功能，不要凭空添加代码中没有的内容
+2. 将项目拆分为 4-6 个学习阶段，采用由浅入深的学习路径：
+   - 先从全局架构和入口开始（鸟瞰项目全貌）
+   - 再深入核心模块和设计模式
+   - 最后理解高级特性和系统交互
+3. 阶段之间循序渐进，按照理解代码的逻辑顺序安排
+4. 根据每日可用时间合理分配每个阶段的天数，总天数 = ${params.duration_weeks * 7} 天
+5. 每个阶段的核心知识点（key_topics）必须来自代码中实际使用的技术、设计模式、框架特性等，列出 3-6 个
+6. 每个阶段的学习目标（learning_objectives）列出 2-4 个可验证的目标
+7. 每个阶段写一段 800 字左右的学习导读（summary_text）：
+   - 必须基于代码中的实际实现来写
+   - 解释这部分代码的核心设计思路、关键逻辑、数据流向
+   - 指出代码中的设计亮点和可以学习的编程技巧
+   - 引用具体的文件名、函数名、类名来说明
+8. 每个阶段的 core_output 描述学完后的具体产出（如"能画出数据库层的 ER 图并解释每张表的用途"、"能独立修改某个模块并运行通过"）
+9. 每个阶段提供 1-2 个 real_world_cases（这种技术/设计模式在业界的真实应用案例）
+10. 每个阶段设计 3-5 个 assessment_questions（代码理解检测题）：
+    - 题目必须基于代码中这部分内容来出，读完对应代码就能回答
+    - 包含：代码理解题（这段代码做了什么）、设计思考题（为什么这样设计）、动手实践题（如果要改XXX你会怎么做）
+    - 不能出超出对应阶段代码范围的题`;
+
+  if (isDeepSeek()) {
+    return deepSeekGenerateObject<GeneratedPlan>(prompt, PLAN_SCHEMA_DESC);
+  }
+
+  const model = getModel();
+  const { object } = await generateObject({
+    model,
+    schema: planSchema,
+    prompt,
+  });
+  return object;
+}
+
+const perQuestionResultSchema = z.object({
+  question_index: z.number(),
+  question_text: z.string(),
+  is_correct: z.boolean(),
+  score: z.number().min(0).max(100),
+  feedback: z.string().describe("针对这道题的反馈"),
+});
+
+const suggestionSchema = z.object({
+  title: z.string().describe("资料标题"),
+  url: z.string().describe("可访问的链接URL"),
+  description: z.string().describe("简短推荐理由"),
+});
+
 const assessmentSchema = z.object({
   score_overall: z.number().min(0).max(100),
   score_coverage: z.number().min(0).max(100).describe("知识覆盖度"),
@@ -261,8 +354,9 @@ const assessmentSchema = z.object({
   score_accuracy: z.number().min(0).max(100).describe("表达准确性"),
   passed: z.boolean(),
   missing_topics: z.array(z.string()).describe("未覆盖或理解不足的知识点"),
-  feedback: z.string().describe("详细反馈，说明优点和不足，但不直接给出答案"),
-  suggestions: z.array(z.string()).describe("改进建议，推荐具体的论文/文章/链接帮助学习"),
+  feedback: z.string().describe("总体反馈，说明优点和不足，但不直接给出答案"),
+  suggestions: z.array(suggestionSchema).describe("推荐的学习资料，必须包含可访问的URL"),
+  per_question_results: z.array(perQuestionResultSchema).describe("每道题的独立评分和反馈"),
 });
 
 export type AssessmentResult = z.infer<typeof assessmentSchema>;
@@ -274,9 +368,22 @@ const ASSESS_SCHEMA_DESC = `{
   "score_accuracy": 75,
   "passed": true,
   "missing_topics": ["未覆盖的知识点"],
-  "feedback": "详细评估反馈文字",
-  "suggestions": ["推荐的论文/文章/链接"]
+  "feedback": "总体评估反馈",
+  "suggestions": [
+    { "title": "资料标题", "url": "https://example.com/article", "description": "推荐理由" }
+  ],
+  "per_question_results": [
+    { "question_index": 0, "question_text": "题目文本", "is_correct": true, "score": 85, "feedback": "回答准确，但可以补充..." }
+  ]
 }`;
+
+export interface AssessmentQuestionInput {
+  type: "choice" | "fill" | "true_false" | "short_answer";
+  question: string;
+  options?: string[];
+  correct_answer?: string;
+  user_answer: string;
+}
 
 export async function assessLearning(params: {
   stage_title: string;
@@ -284,11 +391,33 @@ export async function assessLearning(params: {
   learning_objectives: string[];
   user_input: string;
   questions?: string[];
+  structured_questions?: AssessmentQuestionInput[];
   answers?: { question: string; answer: string }[];
 }): Promise<AssessmentResult> {
-  const answerBlock = params.answers?.length
-    ? params.answers.map((a, i) => `问题${i + 1}: ${a.question}\n回答: ${a.answer}`).join("\n\n")
-    : params.user_input;
+  let answerBlock: string;
+
+  if (params.structured_questions?.length) {
+    answerBlock = params.structured_questions.map((q, i) => {
+      let typeLabel = "简答题";
+      if (q.type === "choice") typeLabel = "选择题";
+      else if (q.type === "fill") typeLabel = "填空题";
+      else if (q.type === "true_false") typeLabel = "判断题";
+
+      let block = `问题${i + 1} [${typeLabel}]: ${q.question}`;
+      if (q.type === "choice" && q.options?.length) {
+        block += `\n选项: ${q.options.map((o, j) => `${String.fromCharCode(65 + j)}. ${o}`).join(" | ")}`;
+      }
+      if (q.correct_answer) {
+        block += `\n标准答案: ${q.correct_answer}`;
+      }
+      block += `\n学生回答: ${q.user_answer}`;
+      return block;
+    }).join("\n\n");
+  } else if (params.answers?.length) {
+    answerBlock = params.answers.map((a, i) => `问题${i + 1}: ${a.question}\n回答: ${a.answer}`).join("\n\n");
+  } else {
+    answerBlock = params.user_input;
+  }
 
   const prompt = `你是一位严格但公正的学习评估专家。请评估以下学习者的阶段性学习成果。
 
@@ -301,16 +430,24 @@ export async function assessLearning(params: {
 ${answerBlock}
 
 ## 评估要求
-1. 从三个维度评分（0-100）:
+1. **逐题评估**（per_question_results）:
+   - 为每一道题给出独立的评分（0-100）和反馈
+   - 选择题/填空题/判断题: 对比标准答案判对错，is_correct 直接判定，正确得100分，错误得0分
+   - 简答题: 根据内容质量打分（0-100），is_correct 在 score ≥ 60 时为 true
+   - 每题的 feedback 要具体指出这道题答得好/不好在哪里
+2. **总体三维评分**（0-100）:
    - 知识覆盖度（score_coverage）: 是否涵盖了核心知识点
    - 理解深度（score_depth）: 是否真正理解而非表面复述
-   - 表达准确性（score_accuracy）: 技术术语使用是否准确
-2. 综合评分 = 覆盖度 × 0.4 + 深度 × 0.35 + 准确性 × 0.25
-3. 通过标准: 综合分 ≥ 70 且覆盖度 ≥ 80%
-4. 如果发现学习者直接复制粘贴资料原文，降低深度分
-5. feedback 中说明不足之处，但【绝对不要直接给出答案】
-6. suggestions 中推荐具体的学习资料（论文名、文章标题、文档链接等），帮助学习者自行弥补不足
-7. missing_topics 列出未覆盖或理解不足的知识点`;
+   - 表达准确性（score_accuracy）: 术语使用是否准确
+3. 综合评分 = 覆盖度 × 0.4 + 深度 × 0.35 + 准确性 × 0.25
+4. 通过标准: 综合分 ≥ 70 且覆盖度 ≥ 80%
+5. 如果发现学习者直接复制粘贴资料原文，降低深度分
+6. feedback 是总体反馈，说明整体不足之处，但【绝对不要直接给出答案】
+7. suggestions 中推荐具体的学习资料，每条必须包含:
+   - title: 资料标题（如论文名/文章名/文档名）
+   - url: 真实可访问的链接URL（如 https://python.langchain.com/docs/... 或 https://arxiv.org/abs/...）
+   - description: 推荐理由（一句话）
+8. missing_topics 列出未覆盖或理解不足的知识点`;
 
   if (isDeepSeek()) {
     return deepSeekGenerateObject<AssessmentResult>(prompt, ASSESS_SCHEMA_DESC);
@@ -473,50 +610,112 @@ const MASTERY_SCHEMA_DESC = `{
 }
 overall_level 可选值: struggling（困难）, on_track（正常）, advanced（优秀）`;
 
+export interface GeneratedQuestion {
+  type: "choice" | "fill" | "true_false" | "short_answer";
+  question: string;
+  options?: string[];
+  correct_answer?: string;
+}
+
+const generatedQuestionSchema = z.object({
+  type: z.enum(["choice", "fill", "true_false", "short_answer"]),
+  question: z.string(),
+  options: z.array(z.string()).optional().describe("选择题的4个选项"),
+  correct_answer: z.string().optional().describe("选择题/填空题/判断题的标准答案。选择题填选项内容，判断题填'对'或'错'"),
+});
+
+const QUESTION_SCHEMA_DESC = `[
+  {
+    "type": "choice",
+    "question": "以下哪个是...",
+    "options": ["选项A", "选项B", "选项C", "选项D"],
+    "correct_answer": "选项A"
+  },
+  {
+    "type": "true_false",
+    "question": "XXX是否正确？",
+    "correct_answer": "对"
+  },
+  {
+    "type": "fill",
+    "question": "在LangChain中，用于管理提示词模板的类叫___",
+    "correct_answer": "PromptTemplate"
+  },
+  {
+    "type": "short_answer",
+    "question": "请解释XXX的工作原理"
+  }
+]`;
+
 export async function regenerateAssessmentQuestions(params: {
   stage_title: string;
   key_topics: string[];
   learning_objectives: string[];
   stage_description: string;
   summary_text?: string;
-}): Promise<string[]> {
-  const summaryBlock = params.summary_text
-    ? `\n## 本阶段学习导读内容（学生实际学习的材料）\n${params.summary_text}\n`
-    : "";
+  chat_history?: { role: string; content: string }[];
+}): Promise<GeneratedQuestion[]> {
+  const hasChatHistory = params.chat_history && params.chat_history.length > 0;
 
-  const prompt = `你是一位学习评估设计专家。请为以下学习阶段设计 3 道思考题。
+  let contentBlock: string;
+  if (hasChatHistory) {
+    const chatSnippet = params.chat_history!
+      .filter(m => m.content !== "开始学习")
+      .slice(-30)
+      .map(m => `${m.role === "user" ? "学生" : "AI导师"}: ${m.content}`)
+      .join("\n\n");
+    contentBlock = `\n## 学生的实际学习对话记录（出题的主要依据）\n${chatSnippet}\n`;
+    if (params.summary_text) {
+      contentBlock += `\n## 本阶段学习导读（辅助参考）\n${params.summary_text}\n`;
+    }
+  } else {
+    contentBlock = params.summary_text
+      ? `\n## 本阶段学习导读内容（学生实际学习的材料）\n${params.summary_text}\n`
+      : "";
+  }
+
+  const prompt = `你是一位学习评估设计专家。请为以下学习阶段设计 4 道检测题，要求**题型多样化**。
 
 ## 阶段信息
 - 阶段名称: ${params.stage_title}
 - 阶段描述: ${params.stage_description}
 - 核心知识点: ${params.key_topics.join("、")}
 - 学习目标: ${params.learning_objectives.join("；")}
-${summaryBlock}
+${contentBlock}
 ## 出题规则（必须严格遵守）
-1. 【最重要】题目的考察范围和深度必须严格匹配"学习导读内容"中实际教授的程度：
-   - 导读中用 1-2 句话提及的概念 → 只能出"是什么/有什么用"层面的题，不能问原理
-   - 导读中用一段话详细讲解的概念 → 可以出理解和应用层面的题
-   - 导读中有完整实操步骤的概念 → 可以出综合实践题
-2. 绝对不能出学生仅凭导读内容答不出来的题——如果回答需要额外查资料，说明题目超纲
-3. 禁止出需要了解"底层实现原理"、"源码级机制"、"论文级理论"才能回答的题（除非导读明确讲了这些）
-4. 题目要有深度但不超纲：考察的是学生对导读内容的消化程度，而非对该话题的全面理解
-5. 类型组合：一道"为什么这样做"（基于导读中的解释）、一道"动手实操"（基于导读中的实战环节）、一道"如果改变参数/条件会怎样"（基于导读中提到的对比）
-6. 优先围绕导读中的核心实战案例出题（如导读提到"构建简历信息提取工具"，就围绕这个出题）
 
-请返回一个 JSON 数组，包含 3 个字符串（题目文本）。只返回 JSON 数组，不要其他文字。`;
+### 内容来源规则
+${hasChatHistory
+    ? `1. 【最重要】题目必须基于"学生的实际学习对话记录"中讨论过的内容出题
+2. 优先考察对话中AI导师讲解过的核心概念、学生回答过的问题、讨论过的案例
+3. 不能出对话中完全没涉及过的知识点
+4. 对话中学生理解薄弱的地方，可以适当加强考察`
+    : `1. 【最重要】题目的考察范围必须严格匹配学习导读中实际教授的内容
+2. 绝对不能出学生仅凭导读答不出来的题
+3. 禁止出需要额外查资料才能回答的题`}
+
+### 题型要求（4题混合出题）
+- 必须包含 1 道**选择题**（choice）: 4个选项，有且只有1个正确答案
+- 必须包含 1 道**判断题**（true_false）: correct_answer 填"对"或"错"
+- 必须包含 1 道**填空题**（fill）: 题目中用___标记空白处，correct_answer 填答案
+- 必须包含 1 道**简答题**（short_answer）: 开放性问题，不需要 correct_answer
+
+### 难度控制
+- 选择题/判断题/填空题: 考察知识点记忆和基本理解
+- 简答题: 考察深层理解和应用能力
+- 所有题目不超纲：学完本阶段内容就应该能答出来`;
 
   if (isDeepSeek()) {
-    const result = await deepSeekGenerateObject<string[]>(prompt, '["题目1", "题目2", "题目3"]');
-    return result;
+    return deepSeekGenerateObject<GeneratedQuestion[]>(prompt, QUESTION_SCHEMA_DESC);
   }
 
   const model = getModel();
   const { object } = await generateObject({
     model,
-    schema: z.array(z.string()),
+    schema: z.array(generatedQuestionSchema),
     prompt,
   });
-  return object;
+  return object as GeneratedQuestion[];
 }
 
 export async function analyzeMastery(params: {
@@ -682,6 +881,37 @@ ${projectInfo}
   return text;
 }
 
+export interface StructuredSummary {
+  core_concepts: { name: string; explanation: string; mastery: "solid" | "partial" | "weak" }[];
+  key_takeaways: string[];
+  open_questions: string[];
+  next_actions: string[];
+  one_line_summary: string;
+}
+
+const structuredSummarySchema = z.object({
+  core_concepts: z.array(z.object({
+    name: z.string().describe("概念名称，2-6个字"),
+    explanation: z.string().describe("一句话解释"),
+    mastery: z.enum(["solid", "partial", "weak"]).describe("学生对该概念的掌握程度"),
+  })),
+  key_takeaways: z.array(z.string()).describe("关键收获，3-5条"),
+  open_questions: z.array(z.string()).describe("待深入的问题，1-3条"),
+  next_actions: z.array(z.string()).describe("下一步行动建议，2-3条"),
+  one_line_summary: z.string().describe("一句话总结本阶段学习成果"),
+});
+
+const STRUCTURED_SUMMARY_SCHEMA_DESC = `{
+  "core_concepts": [
+    { "name": "概念名", "explanation": "一句话解释", "mastery": "solid" }
+  ],
+  "key_takeaways": ["收获1", "收获2"],
+  "open_questions": ["待深入问题1"],
+  "next_actions": ["行动1", "行动2"],
+  "one_line_summary": "一句话总结"
+}
+mastery 可选值: solid（掌握扎实）, partial（部分理解）, weak（需加强）`;
+
 export async function generateStageSummary(params: {
   stage_title: string;
   key_topics: string[];
@@ -695,7 +925,7 @@ export async function generateStageSummary(params: {
     .map((m) => `${m.role === "user" ? "学员" : "AI"}: ${m.content}`)
     .join("\n\n");
 
-  const prompt = `你是一位学习笔记助手。请根据以下阶段学习内容，生成一份结构化的阶段学习笔记。
+  const prompt = `你是一位学习笔记助手。请根据以下阶段学习内容，生成一份结构化的阶段学习总结。
 
 ## 阶段: ${params.stage_title}
 ## 知识点: ${params.key_topics.join("、")}
@@ -707,12 +937,26 @@ ${chatSnippet || "（暂无对话）"}
 ${params.user_notes ? `## 学员已有笔记\n${params.user_notes}` : ""}
 
 ## 要求
-1. 用 Markdown 格式输出
-2. 包含：核心概念总结、关键收获、待深入问题、下一步行动
-3. 简洁实用，控制在 800 字以内
-4. 基于实际对话内容，不要编造`;
+1. core_concepts: 从对话中提取 3-6 个核心概念，每个包含名称、一句话解释、和学生掌握程度
+   - solid: 学生在对话中展示了正确理解
+   - partial: 学生有基本概念但不够深入
+   - weak: 学生理解有偏差或对话中没怎么涉及
+2. key_takeaways: 3-5 条关键收获（从对话中学到的最重要的东西）
+3. open_questions: 1-3 个待深入的问题（对话中没完全解决的、或学生表现出困惑的）
+4. next_actions: 2-3 条下一步行动建议
+5. one_line_summary: 一句话概括本阶段学习成果
+6. 必须基于实际对话内容，不要编造`;
+
+  if (isDeepSeek()) {
+    const result = await deepSeekGenerateObject<StructuredSummary>(prompt, STRUCTURED_SUMMARY_SCHEMA_DESC);
+    return JSON.stringify(result);
+  }
 
   const model = getModel();
-  const { text } = await generateText({ model, prompt });
-  return text;
+  const { object } = await generateObject({
+    model,
+    schema: structuredSummarySchema,
+    prompt,
+  });
+  return JSON.stringify(object);
 }
