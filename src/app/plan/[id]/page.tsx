@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface Plan {
   id: string;
@@ -577,9 +578,13 @@ export default function PlanDashboard() {
                               : "bg-card border border-border/30 rounded-bl-sm"
                           }`}
                         >
-                          {msg.content.split("\n").map((line, j) => (
-                            <p key={j} className={j > 0 ? "mt-2" : ""}>{line}</p>
-                          ))}
+                          {msg.role === "assistant" ? (
+                            <MarkdownRenderer content={msg.content} />
+                          ) : (
+                            msg.content.split("\n").map((line, j) => (
+                              <p key={j} className={j > 0 ? "mt-2" : ""}>{line}</p>
+                            ))
+                          )}
                         </div>
                       </div>
                     ))}
@@ -894,10 +899,8 @@ export default function PlanDashboard() {
                         return (
                           <div>
                             <h3 className="text-sm font-medium mb-2">AI 阶段笔记</h3>
-                            <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 min-h-[120px]">
-                              {stageNote.ai_summary.split("\n").map((line, i) => (
-                                <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-2 last:mb-0">{line}</p>
-                              ))}
+                            <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 min-h-[120px] text-sm text-muted-foreground">
+                              <MarkdownRenderer content={stageNote.ai_summary} />
                             </div>
                           </div>
                         );
@@ -961,10 +964,8 @@ export default function PlanDashboard() {
                     {selectedStage.summary_text && (
                       <div>
                         <h3 className="text-lg font-semibold mb-3">📖 导读</h3>
-                        <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20">
-                          {selectedStage.summary_text.split("\n").map((line, i) => (
-                            <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-2 last:mb-0">{line}</p>
-                          ))}
+                        <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 text-sm text-muted-foreground">
+                          <MarkdownRenderer content={selectedStage.summary_text} />
                         </div>
                       </div>
                     )}
