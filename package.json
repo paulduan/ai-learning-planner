@@ -9,15 +9,23 @@
     "start": "next start",
     "lint": "eslint",
     "electron:dev": "concurrently \"next dev -p 3456\" \"wait-on http://localhost:3456 && ELECTRON_DEV=1 electron .\"",
-    "electron:build": "next build && node scripts/prepare-standalone.mjs && electron-builder",
-    "electron:start": "next build && electron ."
+    "electron:build": "next build && node scripts/prepare-standalone.mjs && NODE_OPTIONS='--experimental-require-module' CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir",
+    "electron:desktop": "pnpm electron:build && node scripts/copy-desktop-app.mjs",
+    "electron:start": "next build && node scripts/prepare-standalone.mjs && electron ."
   },
   "build": {
     "appId": "com.ai-learning-planner.app",
     "productName": "精细化AI规划",
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "electron/**/*",
       "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
     ],
     "extraResources": [
       {
@@ -30,17 +38,27 @@
         "filter": [
           "**/*",
           "!node_modules",
-          "!node_modules/**/*"
+          "!node_modules/**/*",
+          "!dist",
+          "!dist/**/*",
+          "!data",
+          "!data/**/*"
         ]
       }
     ],
     "mac": {
-      "target": "dmg",
-      "icon": "public/icon.png"
+      "target": [
+        "dmg",
+        "dir"
+      ],
+      "category": "public.app-category.education",
+      "identity": null
     },
     "win": {
-      "target": "nsis",
-      "icon": "public/icon.png"
+      "target": "nsis"
+    },
+    "dmg": {
+      "title": "精细化AI规划"
     }
   },
   "dependencies": {

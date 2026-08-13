@@ -2,7 +2,9 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
-const DB_DIR = process.env.APP_DATA_DIR || path.join(process.cwd(), "data");
+const DB_DIR =
+  process.env.APP_DATA_DIR ||
+  path.join(/*turbopackIgnore: true*/ process.cwd(), "data");
 const DB_PATH = path.join(DB_DIR, "learning-planner.db");
 
 let _db: Database.Database | null = null;
@@ -30,6 +32,41 @@ function safeAddColumn(db: Database.Database, table: string, column: string, def
   if (!columnExists(db, table, column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function tableExists(db: Database.Database, table: string): boolean {
+  const row = db
+    .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table) as { ok: number } | undefined;
+  return !!row;
+}
+
+/** teaching_chat.stage_id is used as a chat thread key (incl. interview_* ids), not always a real stage FK. */
+function migrateTeachingChatDropStageFk(db: Database.Database) {
+  if (!tableExists(db, "teaching_chat")) return;
+
+  const fks = db.prepare("PRAGMA foreign_key_list(teaching_chat)").all() as { table: string }[];
+  if (!fks.some((fk) => fk.table === "stage")) return;
+
+  db.pragma("foreign_keys = OFF");
+  const migrate = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE teaching_chat_new (
+        id TEXT PRIMARY KEY,
+        stage_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO teaching_chat_new (id, stage_id, role, content, created_at)
+        SELECT id, stage_id, role, content, created_at FROM teaching_chat;
+      DROP TABLE teaching_chat;
+      ALTER TABLE teaching_chat_new RENAME TO teaching_chat;
+      CREATE INDEX IF NOT EXISTS idx_teaching_chat_stage ON teaching_chat(stage_id);
+    `);
+  });
+  migrate();
+  db.pragma("foreign_keys = ON");
 }
 
 function runMigrations(db: Database.Database) {
@@ -161,8 +198,17 @@ function runMigrations(db: Database.Database) {
   safeAddColumn(db, "learning_plan", "analytics_enabled", "INTEGER DEFAULT 1");
   safeAddColumn(db, "learning_plan", "review_interval_preset", "TEXT DEFAULT 'standard'");
 
+  safeAddColumn(db, "learning_plan", "source_type", "TEXT DEFAULT 'goal'");
+  safeAddColumn(db, "learning_plan", "source_path", "TEXT DEFAULT ''");
+  safeAddColumn(db, "learning_plan", "source_file_tree", "TEXT DEFAULT ''");
+  safeAddColumn(db, "learning_plan", "source_files", "TEXT DEFAULT '[]'");
+
   safeAddColumn(db, "system_config", "review_notifications", "INTEGER DEFAULT 1");
   safeAddColumn(db, "system_config", "default_review_interval_preset", "TEXT DEFAULT 'standard'");
+
+  // teaching_chat.stage_id is a chat thread key (real stage id OR interview_* / stage_interview_*),
+  // so it must not enforce FK to stage(id).
+  migrateTeachingChatDropStageFk(db);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS teaching_chat (
@@ -170,8 +216,7 @@ function runMigrations(db: Database.Database) {
       stage_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (stage_id) REFERENCES stage(id) ON DELETE CASCADE
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_teaching_chat_stage ON teaching_chat(stage_id);
 

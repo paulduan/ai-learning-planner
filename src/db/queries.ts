@@ -41,6 +41,10 @@ export interface LearningPlan {
   adaptive_enabled: boolean;
   analytics_enabled: boolean;
   review_interval_preset: string;
+  source_type: string;
+  source_path: string;
+  source_file_tree: string;
+  source_files: string[];
 }
 
 export interface Stage {
@@ -93,6 +97,9 @@ export interface PerQuestionResult {
   is_correct: boolean;
   score: number;
   feedback: string;
+  user_answer?: string;
+  correct_answer?: string;
+  question_type?: string;
 }
 
 export interface Assessment {
@@ -185,36 +192,61 @@ export function createPlan(plan: {
   user_motivation?: string;
   user_background?: string;
   expected_outcome?: string;
+  source_type?: string;
+  source_path?: string;
+  source_file_tree?: string;
+  source_files?: string[];
 }): string {
   const db = getDb();
   const id = uuidv4();
   db.prepare(
-    `INSERT INTO learning_plan (id, title, goal_description, duration_weeks, daily_hours, skill_level, status, user_motivation, user_background, expected_outcome)
-     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`
+    `INSERT INTO learning_plan (
+      id, title, goal_description, duration_weeks, daily_hours, skill_level, status,
+      user_motivation, user_background, expected_outcome,
+      source_type, source_path, source_file_tree, source_files
+    ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, plan.title, plan.goal_description, plan.duration_weeks, plan.daily_hours, plan.skill_level,
-    plan.user_motivation || "", plan.user_background || "", plan.expected_outcome || ""
+    plan.user_motivation || "", plan.user_background || "", plan.expected_outcome || "",
+    plan.source_type || "goal",
+    plan.source_path || "",
+    plan.source_file_tree || "",
+    JSON.stringify(plan.source_files || [])
   );
   return id;
+}
+
+function mapPlanRow(row: Record<string, unknown>): LearningPlan {
+  return {
+    ...(row as unknown as LearningPlan),
+    review_enabled: row.review_enabled !== 0,
+    adaptive_enabled: row.adaptive_enabled !== 0,
+    analytics_enabled: row.analytics_enabled !== 0,
+    source_type: (row.source_type as string) || "goal",
+    source_path: (row.source_path as string) || "",
+    source_file_tree: (row.source_file_tree as string) || "",
+    source_files: parseJsonField(row.source_files) as string[],
+  };
 }
 
 export function getPlan(id: string): LearningPlan | null {
   const db = getDb();
   const row = db.prepare("SELECT * FROM learning_plan WHERE id = ?").get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
-  return row as unknown as LearningPlan;
+  return mapPlanRow(row);
 }
 
 export function getActivePlan(): LearningPlan | null {
   const db = getDb();
   const row = db.prepare("SELECT * FROM learning_plan WHERE status = 'active' ORDER BY created_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
   if (!row) return null;
-  return row as unknown as LearningPlan;
+  return mapPlanRow(row);
 }
 
 export function getAllPlans(): LearningPlan[] {
   const db = getDb();
-  return db.prepare("SELECT * FROM learning_plan ORDER BY created_at DESC").all() as unknown as LearningPlan[];
+  const rows = db.prepare("SELECT * FROM learning_plan ORDER BY created_at DESC").all() as Record<string, unknown>[];
+  return rows.map(mapPlanRow);
 }
 
 export function updatePlan(id: string, updates: Partial<LearningPlan>) {
@@ -223,6 +255,11 @@ export function updatePlan(id: string, updates: Partial<LearningPlan>) {
   const values: unknown[] = [];
 
   for (const [key, value] of Object.entries(updates)) {
+    if (key === "source_files") {
+      fields.push(`${key} = ?`);
+      values.push(JSON.stringify(value || []));
+      continue;
+    }
     fields.push(`${key} = ?`);
     values.push(value);
   }

@@ -23,7 +23,15 @@ function log(msg) {
 }
 
 function getDataDir() {
-  const dir = path.join(app.getPath("userData"), "data");
+  // Keep a stable data location across productName / install path changes,
+  // so updating the app in /Applications does not look like a "fresh install".
+  const stableRoot = path.join(
+    app.getPath("home"),
+    "Library",
+    "Application Support",
+    "ai-learning-planner",
+  );
+  const dir = path.join(stableRoot, "data");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

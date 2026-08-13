@@ -6,6 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  HighlightedText,
+  LearnerAvatarPicker,
+  TeachBackgroundPicker,
+  TeachChatBackdrop,
+  TutorAvatarPicker,
+  useKeywordHighlight,
+  useLearnerAvatar,
+  useTeachBackground,
+  useTutorAvatar,
+} from "@/components/teach-chat";
 import { toast } from "sonner";
 
 interface Plan {
@@ -73,7 +84,28 @@ interface StageProject {
   status: string;
 }
 
-type RightPanel = "learn" | "resources" | "project" | "info" | "notes";
+type RightPanel = "learn" | "resources" | "project" | "info" | "notes" | "assessments";
+
+interface AssessmentRecord {
+  id: string;
+  score_overall: number;
+  score_coverage: number;
+  score_depth: number;
+  score_accuracy: number;
+  passed: boolean;
+  feedback: string;
+  missing_topics: string[];
+  suggestions: (string | { title: string; url: string; description: string })[];
+  per_question_results: {
+    question_index: number;
+    question_text: string;
+    is_correct: boolean;
+    score: number;
+    feedback: string;
+  }[];
+  attempt_number: number;
+  created_at: string;
+}
 
 export default function PlanDashboard() {
   const router = useRouter();
@@ -92,6 +124,8 @@ export default function PlanDashboard() {
   const [rightPanel, setRightPanel] = useState<RightPanel>("learn");
   const [project, setProject] = useState<StageProject | null>(null);
   const [dueReviewCount, setDueReviewCount] = useState(0);
+  const [assessmentHistory, setAssessmentHistory] = useState<AssessmentRecord[]>([]);
+  const [expandedAssessmentId, setExpandedAssessmentId] = useState<string | null>(null);
 
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -102,6 +136,16 @@ export default function PlanDashboard() {
   const [generatingSummary, setGeneratingSummary] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const { avatarId, selectAvatar } = useTutorAvatar();
+  const { avatarId: learnerAvatarId, selectAvatar: selectLearnerAvatar } = useLearnerAvatar();
+  const { keywordHighlight } = useKeywordHighlight();
+  const {
+    bgId,
+    customUrl,
+    selectBackground,
+    setCustomBackground,
+    clearCustomBackground,
+  } = useTeachBackground();
 
   const loadData = useCallback(async () => {
     try {
@@ -132,10 +176,16 @@ export default function PlanDashboard() {
   useEffect(() => {
     function handleFocus() {
       loadData();
+      if (selectedStageId) {
+        fetch(`/api/stage/${selectedStageId}/assessments`)
+          .then((r) => r.json())
+          .then((d) => setAssessmentHistory(Array.isArray(d) ? d : []))
+          .catch(() => {});
+      }
     }
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
-  }, [loadData]);
+  }, [loadData, selectedStageId]);
 
   useEffect(() => {
     if (!selectedStageId) return;
@@ -158,6 +208,14 @@ export default function PlanDashboard() {
         user_notes: d.user_notes || "",
       }))
       .catch(() => setStageNote({ ai_summary: "", user_notes: "" }));
+
+    fetch(`/api/stage/${selectedStageId}/assessments`)
+      .then((r) => r.json())
+      .then((d) => {
+        setAssessmentHistory(Array.isArray(d) ? d : []);
+        setExpandedAssessmentId(null);
+      })
+      .catch(() => setAssessmentHistory([]));
   }, [selectedStageId]);
 
   useEffect(() => {
@@ -493,26 +551,27 @@ export default function PlanDashboard() {
                   <h2 className="text-xl font-bold">{selectedStage.title}</h2>
                 </div>
 
-                {selectedStage.status === "active" && (
+                {(selectedStage.status === "active" || selectedStage.status === "completed") && (
                   <Button
                     variant="outline"
                     size="sm"
                     className="rounded-lg text-xs shrink-0"
                     onClick={() => router.push(`/plan/${planId}/stage/${selectedStageId}/assess`)}
                   >
-                    ✍️ 申请检测
+                    {selectedStage.status === "completed" ? "🔄 再次检测" : "✍️ 申请检测"}
                   </Button>
                 )}
               </div>
 
               {/* 面板切换按钮 */}
-              <div className="flex gap-1">
+              <div className="flex gap-1 flex-wrap">
                 {([
                   { key: "learn" as RightPanel, label: "💬 AI 教学" },
                   { key: "resources" as RightPanel, label: `📚 资料 (${resources.length})` },
                   { key: "project" as RightPanel, label: `🛠️ 实战项目` },
                   { key: "notes" as RightPanel, label: "📝 阶段笔记" },
                   { key: "info" as RightPanel, label: "📖 详情" },
+                  { key: "assessments" as RightPanel, label: `📌 检测沉淀 (${assessmentHistory.length})` },
                 ]).map((tab) => (
                   <button
                     key={tab.key}
@@ -526,6 +585,19 @@ export default function PlanDashboard() {
                     {tab.label}
                   </button>
                 ))}
+                <button
+                  onClick={() => {
+                    if (!selectedStageId) return;
+                    if (selectedStage.status === "locked") {
+                      toast.error("请先解锁该阶段");
+                      return;
+                    }
+                    router.push(`/plan/${planId}/stage/${selectedStageId}/interview`);
+                  }}
+                  className="px-4 py-2 rounded-lg text-xs font-medium transition-all text-muted-foreground hover:text-foreground hover:bg-card/50"
+                >
+                  🎤 面试模拟
+                </button>
               </div>
             </div>
 
@@ -533,66 +605,107 @@ export default function PlanDashboard() {
             <div className="flex-1 overflow-hidden">
               {/* AI 教学面板 */}
               {rightPanel === "learn" && (
-                <div className="h-full flex flex-col">
-                  {selectedStage.status === "active" && visibleMessages.length >= 2 && (
-                    <div className="shrink-0 mx-8 mt-4 px-4 py-3 rounded-xl border border-amber-500/20 bg-amber-500/5 flex items-center justify-between gap-3">
-                      <p className="text-xs text-amber-200/80">
-                        学完本阶段后，通过「申请检测」解锁下一阶段
-                      </p>
-                      <Button
-                        size="sm"
-                        className="rounded-lg text-xs shrink-0 h-8"
-                        onClick={() => router.push(`/plan/${planId}/stage/${selectedStageId}/assess`)}
-                      >
-                        ✍️ 申请检测
-                      </Button>
-                    </div>
-                  )}
+                <div className="h-full flex flex-col relative">
+                  <TeachChatBackdrop bgId={bgId} customUrl={customUrl} />
 
-                  <div className="flex-1 overflow-y-auto px-8 py-4 space-y-4">
+                  <div className="relative z-30 shrink-0 px-6 pt-4 pb-2 flex flex-col gap-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <TeachBackgroundPicker
+                        bgId={bgId}
+                        customUrl={customUrl}
+                        onSelect={(id) => {
+                          selectBackground(id);
+                          const label = id === "custom" ? "自定义" : ({ aurora: "极光", dusk: "暮色", ink: "墨海", mint: "薄荷" } as const)[id];
+                          toast.success(`背景已切换为「${label}」`);
+                        }}
+                        onUpload={async (file) => {
+                          try {
+                            await setCustomBackground(file);
+                            toast.success("背景已更换");
+                          } catch (e) {
+                            toast.error((e as Error).message);
+                            throw e;
+                          }
+                        }}
+                        onClearCustom={clearCustomBackground}
+                      />
+                      {selectedStage.status === "active" && visibleMessages.length >= 2 && (
+                        <Button
+                          size="sm"
+                          className="rounded-lg text-xs shrink-0 h-8"
+                          onClick={() => router.push(`/plan/${planId}/stage/${selectedStageId}/assess`)}
+                        >
+                          申请检测
+                        </Button>
+                      )}
+                    </div>
+                    {selectedStage.status === "active" && visibleMessages.length >= 2 && (
+                      <div className="px-3.5 py-2.5 rounded-xl border border-amber-400/20 bg-amber-500/10 backdrop-blur-sm">
+                        <p className="text-xs text-amber-100/85">
+                          学完本阶段后，通过「申请检测」解锁下一阶段
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative z-10 flex-1 overflow-y-auto px-6 py-3 space-y-5">
                     {visibleMessages.length === 0 && !chatSending && (
-                      <div className="flex flex-col items-center py-12 text-center">
-                        <span className="text-3xl mb-3">💬</span>
-                        <p className="text-sm font-medium mb-1">AI 对话教学</p>
-                        <p className="text-xs text-muted-foreground max-w-xs">
-                          AI 导师会通过提问引导你思考，像真正的一对一家教一样。
+                      <div className="flex flex-col items-center py-16 text-center">
+                        <div className="mb-4">
+                          <TutorAvatarPicker avatarId={avatarId} onSelect={selectAvatar} size="md" />
+                        </div>
+                        <p className="text-base font-semibold mb-1.5 gradient-text">和导师开始对话</p>
+                        <p className="text-xs text-muted-foreground/80 max-w-sm leading-relaxed">
+                          点击头像可更换导师形象。回复中的重点词会用颜色与下划线标出。
                         </p>
                       </div>
                     )}
 
-                    {visibleMessages.map((msg, i) => (
-                      <div
-                        key={i}
-                        className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                      >
-                        {msg.role === "assistant" && (
-                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-2.5 mt-1 shrink-0">
-                            <span className="text-xs">🤖</span>
-                          </div>
-                        )}
+                    {visibleMessages.map((msg, i) => {
+                      const isUser = msg.role === "user";
+                      return (
                         <div
-                          className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                            msg.role === "user"
-                              ? "bg-primary text-primary-foreground rounded-br-sm"
-                              : "bg-card border border-border/30 rounded-bl-sm"
-                          }`}
+                          key={i}
+                          className={`flex items-end gap-2.5 ${isUser ? "justify-end" : "justify-start"}`}
                         >
-                          {msg.content.split("\n").map((line, j) => (
-                            <p key={j} className={j > 0 ? "mt-2" : ""}>{line}</p>
-                          ))}
+                          {!isUser && (
+                            <TutorAvatarPicker avatarId={avatarId} onSelect={selectAvatar} size="sm" />
+                          )}
+                          <div
+                            className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm leading-relaxed relative ${
+                              isUser
+                                ? "teach-bubble-user rounded-br-md"
+                                : "teach-bubble-ai rounded-bl-md text-foreground/95"
+                            }`}
+                          >
+                            {isUser ? (
+                              <div className="relative z-[1] space-y-2">
+                                {msg.content.split("\n").map((line, j) => (
+                                  <p key={j}>{line || "\u00A0"}</p>
+                                ))}
+                              </div>
+                            ) : (
+                              <HighlightedText text={msg.content} highlight={keywordHighlight} />
+                            )}
+                          </div>
+                          {isUser && (
+                            <LearnerAvatarPicker
+                              avatarId={learnerAvatarId}
+                              onSelect={selectLearnerAvatar}
+                              size="sm"
+                            />
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {chatSending && (
-                      <div className="flex justify-start">
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mr-2.5 shrink-0">
-                          <span className="text-xs">🤖</span>
-                        </div>
-                        <div className="bg-card border border-border/30 rounded-2xl rounded-bl-sm px-4 py-3">
+                      <div className="flex justify-start items-end gap-2.5">
+                        <TutorAvatarPicker avatarId={avatarId} onSelect={selectAvatar} size="sm" />
+                        <div className="teach-bubble-ai rounded-2xl rounded-bl-md px-4 py-3.5">
                           <div className="flex gap-1.5">
                             {[0, 1, 2].map((i) => (
-                              <div key={i} className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                              <div key={i} className="w-2 h-2 rounded-full bg-primary/50 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
                             ))}
                           </div>
                         </div>
@@ -601,8 +714,8 @@ export default function PlanDashboard() {
                     <div ref={chatEndRef} />
                   </div>
 
-                  <div className="shrink-0 border-t border-border/20 px-8 py-4">
-                    <div className="flex gap-2 max-w-2xl items-end">
+                  <div className="relative z-10 shrink-0 teach-input-dock px-6 py-4">
+                    <div className="flex gap-2.5 max-w-3xl mx-auto items-end">
                       <Textarea
                         ref={inputRef}
                         placeholder="输入你的回答或问题...（Shift+Enter 换行）"
@@ -616,12 +729,12 @@ export default function PlanDashboard() {
                         }}
                         disabled={chatSending}
                         rows={1}
-                        className="flex-1 rounded-lg min-h-10 max-h-40 resize-y"
+                        className="flex-1 rounded-xl min-h-11 max-h-40 resize-y bg-background/45 border-border/40 focus-visible:border-primary/40 shadow-sm"
                       />
                       <Button
                         onClick={() => chatInput.trim() && sendChatMessage(chatInput.trim())}
                         disabled={!chatInput.trim() || chatSending}
-                        className="rounded-lg px-5 h-10 shrink-0"
+                        className="rounded-xl px-5 h-11 shrink-0"
                       >
                         发送
                       </Button>
@@ -925,6 +1038,115 @@ export default function PlanDashboard() {
                         支持多行输入，内容较长时可拖动右下角调整高度
                       </p>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 检测沉淀面板 */}
+              {rightPanel === "assessments" && (
+                <div className="h-full overflow-y-auto px-8 py-6">
+                  <div className="max-w-2xl space-y-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold">检测沉淀</h3>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          记录本阶段每次做题检测的分数、错题与反馈，方便复盘
+                        </p>
+                      </div>
+                      {(selectedStage.status === "active" || selectedStage.status === "completed") && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="rounded-lg text-xs shrink-0"
+                          onClick={() => router.push(`/plan/${planId}/stage/${selectedStageId}/assess`)}
+                        >
+                          {assessmentHistory.length > 0 ? "再次检测" : "去检测"}
+                        </Button>
+                      )}
+                    </div>
+
+                    {assessmentHistory.length === 0 ? (
+                      <div className="px-5 py-10 rounded-xl border border-dashed border-border/30 bg-card/10 text-center">
+                        <span className="text-3xl mb-3 block">📌</span>
+                        <p className="text-sm text-muted-foreground">
+                          完成本阶段学习后进行检测，结果会自动沉淀在这里
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {assessmentHistory.map((item) => {
+                          const expanded = expandedAssessmentId === item.id;
+                          return (
+                            <div
+                              key={item.id}
+                              className="rounded-xl border border-border/30 bg-card/20 overflow-hidden"
+                            >
+                              <button
+                                className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-white/[0.02] transition-colors"
+                                onClick={() => setExpandedAssessmentId(expanded ? null : item.id)}
+                              >
+                                <Badge
+                                  variant="secondary"
+                                  className={`text-[10px] px-2 py-0.5 ${
+                                    item.passed
+                                      ? "bg-green-500/10 text-green-400"
+                                      : "bg-amber-500/10 text-amber-400"
+                                  }`}
+                                >
+                                  {item.passed ? "通过" : "未通过"}
+                                </Badge>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium">
+                                    第 {item.attempt_number} 次检测 · 总分 {Math.round(item.score_overall)}
+                                  </p>
+                                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                                    {new Date(item.created_at).toLocaleString("zh-CN")}
+                                    {" · "}覆盖 {Math.round(item.score_coverage)} / 深度 {Math.round(item.score_depth)} / 准确 {Math.round(item.score_accuracy)}
+                                  </p>
+                                </div>
+                                <span className="text-muted-foreground text-xs">{expanded ? "收起" : "展开"}</span>
+                              </button>
+
+                              {expanded && (
+                                <div className="px-4 pb-4 space-y-3 border-t border-border/20 pt-3">
+                                  {item.feedback && (
+                                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                                      {item.feedback}
+                                    </p>
+                                  )}
+                                  {item.missing_topics?.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {item.missing_topics.map((t) => (
+                                        <span key={t} className="px-2 py-1 rounded-md bg-amber-500/10 text-amber-300 text-[11px]">
+                                          待补强：{t}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {item.per_question_results?.length > 0 && (
+                                    <div className="space-y-2">
+                                      {item.per_question_results.map((q) => (
+                                        <div key={q.question_index} className="px-3 py-2 rounded-lg bg-background/40 border border-border/20">
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <span className={`text-[11px] ${q.is_correct ? "text-green-400" : "text-red-400"}`}>
+                                              {q.is_correct ? "✓" : "✗"} 第 {q.question_index + 1} 题 · {q.score} 分
+                                            </span>
+                                          </div>
+                                          <p className="text-xs text-foreground/90 mb-1">{q.question_text}</p>
+                                          {q.feedback && (
+                                            <p className="text-[11px] text-muted-foreground">{q.feedback}</p>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

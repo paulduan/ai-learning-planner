@@ -31,6 +31,25 @@ interface PerQuestionResult {
   is_correct: boolean;
   score: number;
   feedback: string;
+  user_answer?: string;
+  correct_answer?: string;
+  question_type?: string;
+}
+
+interface HistoricalAssessment {
+  id: string;
+  stage_id: string;
+  score_overall: number;
+  score_coverage: number;
+  score_depth: number;
+  score_accuracy: number;
+  passed: boolean;
+  feedback: string;
+  missing_topics: string[];
+  suggestions: (string | Suggestion)[];
+  per_question_results: PerQuestionResult[];
+  attempt_number: number;
+  created_at: string;
 }
 
 interface Suggestion {
@@ -51,7 +70,7 @@ interface AssessmentResult {
   per_question_results?: PerQuestionResult[];
 }
 
-type ViewState = "questions" | "assessing" | "result";
+type ViewState = "questions" | "assessing" | "result" | "history";
 
 function normalizeQuestion(q: string | StructuredQuestion): StructuredQuestion {
   if (typeof q === "string") {
@@ -85,15 +104,24 @@ export default function AssessPage() {
   const [result, setResult] = useState<AssessmentResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
+  const [historyList, setHistoryList] = useState<HistoricalAssessment[]>([]);
+  const [selectedHistory, setSelectedHistory] = useState<HistoricalAssessment | null>(null);
 
   const loadData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/plan?id=${planId}`);
-      const data = await res.json();
+      const [planRes, historyRes] = await Promise.all([
+        fetch(`/api/plan?id=${planId}`),
+        fetch(`/api/stage/${stageId}/assessments`),
+      ]);
+      const data = await planRes.json();
+      if (historyRes.ok) {
+        const histData = await historyRes.json();
+        setHistoryList(Array.isArray(histData) ? histData : []);
+      }
       if (data?.stages) {
         const found = data.stages.find((s: StageData) => s.id === stageId);
         setStage(found || null);
-        if (found && found.status === "active") {
+        if (found && (found.status === "active" || found.status === "completed")) {
           setRegenerating(true);
           try {
             const regenRes = await fetch(`/api/stage/${stageId}/assess`, { method: "PATCH" });
@@ -222,10 +250,27 @@ export default function AssessPage() {
             阶段 {stage.order_index + 1} 检测
           </h1>
           <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {answeredCount}/{questions.length} 已答
-            </span>
-            <Progress value={(answeredCount / questions.length) * 100} className="w-20 h-1.5" />
+            {historyList.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                onClick={() => {
+                  setSelectedHistory(null);
+                  setViewState(viewState === "history" ? "questions" : "history");
+                }}
+              >
+                {viewState === "history" ? "← 返回答题" : `📋 历史记录 (${historyList.length})`}
+              </Button>
+            )}
+            {viewState === "questions" && (
+              <>
+                <span className="text-xs text-muted-foreground">
+                  {answeredCount}/{questions.length} 已答
+                </span>
+                <Progress value={(answeredCount / questions.length) * 100} className="w-20 h-1.5" />
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -370,6 +415,73 @@ export default function AssessPage() {
             </div>
           )}
 
+          {viewState === "history" && (
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold flex items-center gap-2">📋 检测历史</h2>
+              {selectedHistory ? (
+                <div className="space-y-6">
+                  <div className="flex items-center gap-3">
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedHistory(null)}>← 返回列表</Button>
+                    <span className="text-sm text-muted-foreground">
+                      第 {selectedHistory.attempt_number} 次检测 · {new Date(selectedHistory.created_at).toLocaleString("zh-CN")}
+                    </span>
+                    <Badge className={selectedHistory.passed ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}>
+                      {selectedHistory.passed ? "通过" : "未通过"} · {Math.round(selectedHistory.score_overall)} 分
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <ScoreBar label="知识覆盖" score={selectedHistory.score_coverage} threshold={80} />
+                    <ScoreBar label="理解深度" score={selectedHistory.score_depth} />
+                    <ScoreBar label="表达准确" score={selectedHistory.score_accuracy} />
+                  </div>
+                  {selectedHistory.per_question_results?.length > 0 && (
+                    <PerQuestionDetail results={selectedHistory.per_question_results} />
+                  )}
+                  <div className="glass-card rounded-xl p-6 space-y-3">
+                    <h3 className="font-semibold flex items-center gap-2"><span>💬</span> 总体反馈</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{selectedHistory.feedback}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {historyList.map((h) => (
+                    <button
+                      key={h.id}
+                      onClick={() => setSelectedHistory(h)}
+                      className="w-full text-left glass-card rounded-xl p-4 hover:border-primary/30 transition-all border border-border/20"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">{h.passed ? "✅" : "❌"}</span>
+                          <div>
+                            <div className="text-sm font-medium">
+                              第 {h.attempt_number} 次检测
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(h.created_at).toLocaleString("zh-CN")}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className={`text-lg font-bold ${h.score_overall >= 70 ? "text-green-400" : "text-amber-400"}`}>
+                            {Math.round(h.score_overall)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">综合评分</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                  <Button
+                    className="w-full h-12 rounded-xl glow-primary font-medium mt-4"
+                    onClick={() => setViewState("questions")}
+                  >
+                    开始新的检测
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
           {viewState === "result" && result && (
             <div className="space-y-6">
               {/* Overall Score Card */}
@@ -398,49 +510,9 @@ export default function AssessPage() {
                 </div>
               </div>
 
-              {/* Per-Question Results */}
+              {/* Per-Question Results with answers */}
               {result.per_question_results && result.per_question_results.length > 0 && (
-                <div className="glass-card rounded-xl p-6 space-y-4">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <span>📝</span> 逐题评估
-                  </h3>
-                  <div className="space-y-3">
-                    {result.per_question_results.map((pqr, i) => (
-                      <div
-                        key={i}
-                        className={`p-4 rounded-xl border ${
-                          pqr.is_correct
-                            ? "bg-green-500/5 border-green-500/20"
-                            : "bg-red-500/5 border-red-500/20"
-                        }`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
-                            pqr.is_correct ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"
-                          }`}>
-                            {pqr.is_correct ? "✓" : "✗"}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-sm font-medium">第 {pqr.question_index + 1} 题</span>
-                              <span className={`text-xs font-medium ${
-                                pqr.score >= 80 ? "text-green-400" : pqr.score >= 60 ? "text-amber-400" : "text-red-400"
-                              }`}>
-                                {Math.round(pqr.score)} 分
-                              </span>
-                            </div>
-                            <p className="text-xs text-muted-foreground mb-2 line-clamp-1">
-                              {pqr.question_text}
-                            </p>
-                            <p className="text-sm text-muted-foreground leading-relaxed">
-                              {pqr.feedback}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <PerQuestionDetail results={result.per_question_results} />
               )}
 
               {/* Overall Feedback */}
@@ -519,40 +591,106 @@ export default function AssessPage() {
 
               {/* Action Buttons */}
               <div className="flex gap-3">
-                {result.passed ? (
-                  <Button
-                    className="flex-1 h-12 rounded-xl glow-primary font-medium"
-                    onClick={() => router.push(`/plan/${planId}`)}
-                  >
-                    返回关卡地图 →
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      variant="outline"
-                      className="h-12 rounded-xl border-border/50 px-6"
-                      onClick={() => router.push(`/plan/${planId}/stage/${stageId}`)}
-                    >
-                      ← 回去复习
-                    </Button>
-                    <Button
-                      className="flex-1 h-12 rounded-xl glow-primary font-medium"
-                      onClick={() => {
-                        setViewState("questions");
-                        setResult(null);
-                        setAnswers({});
-                        setCurrentQIndex(0);
-                      }}
-                    >
-                      重新答题
-                    </Button>
-                  </>
-                )}
+                <Button
+                  variant="outline"
+                  className="h-12 rounded-xl border-border/50 px-6"
+                  onClick={() => router.push(result.passed ? `/plan/${planId}` : `/plan/${planId}/stage/${stageId}`)}
+                >
+                  {result.passed ? "← 返回关卡地图" : "← 回去复习"}
+                </Button>
+                <Button
+                  className="flex-1 h-12 rounded-xl glow-primary font-medium"
+                  onClick={async () => {
+                    setRegenerating(true);
+                    try {
+                      const regenRes = await fetch(`/api/stage/${stageId}/assess`, { method: "PATCH" });
+                      if (regenRes.ok) {
+                        const regenData = await regenRes.json();
+                        if (regenData.assessment_questions && stage) {
+                          setStage({ ...stage, assessment_questions: regenData.assessment_questions });
+                        }
+                      }
+                    } catch { /* fallback */ }
+                    setRegenerating(false);
+                    setViewState("questions");
+                    setResult(null);
+                    setAnswers({});
+                    setCurrentQIndex(0);
+                    const hRes = await fetch(`/api/stage/${stageId}/assessments`);
+                    if (hRes.ok) setHistoryList(await hRes.json());
+                  }}
+                >
+                  再次检测
+                </Button>
               </div>
             </div>
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function PerQuestionDetail({ results }: { results: PerQuestionResult[] }) {
+  return (
+    <div className="glass-card rounded-xl p-6 space-y-4">
+      <h3 className="font-semibold flex items-center gap-2">
+        <span>📝</span> 逐题评估
+      </h3>
+      <div className="space-y-3">
+        {results.map((pqr, i) => (
+          <div
+            key={i}
+            className={`p-4 rounded-xl border ${
+              pqr.is_correct
+                ? "bg-green-500/5 border-green-500/20"
+                : "bg-red-500/5 border-red-500/20"
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                pqr.is_correct ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"
+              }`}>
+                {pqr.is_correct ? "✓" : "✗"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-medium">第 {pqr.question_index + 1} 题</span>
+                  {pqr.question_type && (
+                    <Badge variant="outline" className="text-[10px] font-normal">
+                      {questionTypeLabel(pqr.question_type)}
+                    </Badge>
+                  )}
+                  <span className={`text-xs font-medium ${
+                    pqr.score >= 80 ? "text-green-400" : pqr.score >= 60 ? "text-amber-400" : "text-red-400"
+                  }`}>
+                    {Math.round(pqr.score)} 分
+                  </span>
+                </div>
+                <p className="text-sm text-foreground/80 mb-3">{pqr.question_text}</p>
+
+                {pqr.user_answer && (
+                  <div className="mb-2 p-3 rounded-lg bg-background/40 border border-border/20">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">你的回答</div>
+                    <p className="text-sm text-foreground/70">{pqr.user_answer}</p>
+                  </div>
+                )}
+
+                {pqr.correct_answer && !pqr.is_correct && (
+                  <div className="mb-2 p-3 rounded-lg bg-green-500/5 border border-green-500/10">
+                    <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1">参考答案</div>
+                    <p className="text-sm text-green-300/80">{pqr.correct_answer}</p>
+                  </div>
+                )}
+
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {pqr.feedback}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

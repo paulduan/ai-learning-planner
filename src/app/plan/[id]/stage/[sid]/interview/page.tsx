@@ -20,16 +20,18 @@ const STYLES: { id: InterviewStyle; icon: string; name: string; desc: string }[]
   { id: "tough", icon: "🔥", name: "压力面试", desc: "深挖细节，持续追问" },
 ];
 
-export default function InterviewPage() {
+export default function StageInterviewPage() {
   const router = useRouter();
   const params = useParams();
   const planId = params.id as string;
+  const stageId = params.sid as string;
 
   const [style, setStyle] = useState<InterviewStyle | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [planTitle, setPlanTitle] = useState("");
+  const [stageTitle, setStageTitle] = useState("");
+  const [stageIndex, setStageIndex] = useState(0);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -38,20 +40,24 @@ export default function InterviewPage() {
     fetch(`/api/plan?id=${planId}`)
       .then((r) => r.json())
       .then((data) => {
-        if (data?.plan?.title) setPlanTitle(data.plan.title);
+        const stage = (data?.stages || []).find((s: { id: string }) => s.id === stageId);
+        if (stage) {
+          setStageTitle(stage.title);
+          setStageIndex(stage.order_index ?? 0);
+        }
       })
       .catch(() => {});
-  }, [planId]);
+  }, [planId, stageId]);
 
   const loadHistory = useCallback(async (s: InterviewStyle) => {
     try {
-      const res = await fetch(`/api/plan/${planId}/interview?style=${s}`);
+      const res = await fetch(`/api/stage/${stageId}/interview?style=${s}`);
       const data = await res.json();
       setMessages(Array.isArray(data) ? data : []);
     } catch {
       setMessages([]);
     }
-  }, [planId]);
+  }, [stageId]);
 
   useEffect(() => {
     if (style) loadHistory(style);
@@ -65,12 +71,12 @@ export default function InterviewPage() {
     setStyle(s);
     setSending(true);
     try {
-      const res = await fetch(`/api/plan/${planId}/interview?style=${s}`);
+      const res = await fetch(`/api/stage/${stageId}/interview?style=${s}`);
       const data = await res.json().catch(() => null);
       const history = Array.isArray(data) ? data : [];
 
       if (history.length === 0) {
-        const chatRes = await fetch(`/api/plan/${planId}/interview`, {
+        const chatRes = await fetch(`/api/stage/${stageId}/interview`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: "开始面试", style: s }),
@@ -102,7 +108,7 @@ export default function InterviewPage() {
     setSending(true);
 
     try {
-      const res = await fetch(`/api/plan/${planId}/interview`, {
+      const res = await fetch(`/api/stage/${stageId}/interview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: msg, style }),
@@ -124,7 +130,7 @@ export default function InterviewPage() {
   async function handleReset() {
     if (!style) return;
     try {
-      await fetch(`/api/plan/${planId}/interview?style=${style}`, { method: "DELETE" });
+      await fetch(`/api/stage/${stageId}/interview?style=${style}`, { method: "DELETE" });
       setMessages([]);
       setStyle(null);
       toast.success("面试已重置");
@@ -145,7 +151,7 @@ export default function InterviewPage() {
             <Button variant="ghost" size="sm" onClick={() => router.push(`/plan/${planId}`)} className="text-muted-foreground hover:text-foreground">
               ← 返回
             </Button>
-            <h1 className="text-lg font-semibold">模拟面试</h1>
+            <h1 className="text-lg font-semibold">阶段面试模拟</h1>
           </div>
         </header>
 
@@ -153,11 +159,11 @@ export default function InterviewPage() {
           <div className="max-w-2xl mx-auto space-y-8">
             <div className="text-center space-y-3">
               <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/15 to-primary/5 border border-primary/10">
-                <span className="text-4xl">🎙️</span>
+                <span className="text-4xl">🎤</span>
               </div>
-              <h2 className="text-3xl font-bold gradient-text">AI 模拟面试</h2>
+              <h2 className="text-3xl font-bold gradient-text">本章面试模拟</h2>
               <p className="text-muted-foreground max-w-md mx-auto">
-                基于你学习的「{planTitle || "..."}」内容，AI 面试官将对你进行技术面试
+                基于「第 {stageIndex + 1} 阶段 · {stageTitle || "..."}」的学习内容进行专项面试
               </p>
             </div>
 
@@ -201,7 +207,7 @@ export default function InterviewPage() {
             <span className="text-lg">{currentStyle.icon}</span>
             <span className="text-sm font-medium truncate">{currentStyle.name}</span>
             <Badge variant="outline" className="text-[10px] border-border/30 shrink-0">
-              {planTitle}
+              第 {stageIndex + 1} 阶段
             </Badge>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -217,7 +223,7 @@ export default function InterviewPage() {
 
       <main className="flex-1 overflow-y-auto px-6 py-6">
         <div className="max-w-3xl mx-auto space-y-4">
-          {messages.filter(m => m.content !== "开始面试").map((msg, i) => (
+          {messages.filter((m) => m.content !== "开始面试").map((msg, i) => (
             <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
                 msg.role === "user"

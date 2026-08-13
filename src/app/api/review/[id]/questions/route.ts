@@ -1,40 +1,8 @@
 import { NextResponse } from "next/server";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
-import { getConfig, getStage, type ReviewSchedule } from "@/db/queries";
+import { getStage, type ReviewSchedule } from "@/db/queries";
 import { getDb } from "@/db/schema";
-
-function getModel() {
-  const config = getConfig();
-  if (!config.llm_api_key) throw new Error("请先配置 API Key");
-
-  if (config.llm_provider === "anthropic") {
-    const provider = createAnthropic({
-      apiKey: config.llm_api_key,
-      baseURL: config.llm_base_url || undefined,
-    });
-    return provider(config.llm_model || "claude-sonnet-4-20250514");
-  }
-
-  if (config.llm_provider === "deepseek") {
-    const provider = createOpenAI({
-      apiKey: config.llm_api_key,
-      baseURL: config.llm_base_url || "https://api.deepseek.com/v1",
-    });
-    return provider.chat(config.llm_model || "deepseek-chat");
-  }
-
-  const provider = createOpenAI({
-    apiKey: config.llm_api_key,
-    baseURL:
-      config.llm_base_url ||
-      (config.llm_provider === "deepseek"
-        ? "https://api.deepseek.com/v1"
-        : undefined),
-  });
-  return provider(config.llm_model || "gpt-4o-mini");
-}
+import { getModel } from "@/lib/llm";
 
 interface ReviewQuestion {
   question: string;

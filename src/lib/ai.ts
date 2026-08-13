@@ -1,40 +1,9 @@
-import { createOpenAI } from "@ai-sdk/openai";
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
-import { getConfig } from "@/db/queries";
+import { getModel, isOpenAICompatibleStructuredFallback } from "@/lib/llm";
 
-function isDeepSeek() {
-  return getConfig().llm_provider === "deepseek";
-}
-
-function getModel() {
-  const config = getConfig();
-  if (!config.llm_api_key) {
-    throw new Error("请先在设置页面配置 API Key");
-  }
-
-  if (config.llm_provider === "anthropic") {
-    const anthropic = createAnthropic({
-      apiKey: config.llm_api_key,
-      ...(config.llm_base_url ? { baseURL: config.llm_base_url } : {}),
-    });
-    return anthropic(config.llm_model || "claude-sonnet-4-20250514");
-  }
-
-  if (config.llm_provider === "deepseek") {
-    const deepseek = createOpenAI({
-      apiKey: config.llm_api_key,
-      baseURL: config.llm_base_url || "https://api.deepseek.com/v1",
-    });
-    return deepseek.chat(config.llm_model || "deepseek-chat");
-  }
-
-  const openai = createOpenAI({
-    apiKey: config.llm_api_key,
-    ...(config.llm_base_url ? { baseURL: config.llm_base_url } : {}),
-  });
-  return openai(config.llm_model || "gpt-4o-mini");
+function useStructuredTextFallback() {
+  return isOpenAICompatibleStructuredFallback();
 }
 
 function extractJson(text: string): unknown {
@@ -170,7 +139,7 @@ ${params.constraints?.length ? `额外要求: ${params.constraints.join("、")}`
     - 错误示例：阶段2讲"基础Prompt"，检测题却问"Chain-of-Thought"（这是阶段3的内容）
 11. 如果学习者有明确的动机（如找工作、投资赚钱、考试），优先安排与该目标最相关的内容`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject<GeneratedPlan>(prompt, PLAN_SCHEMA_DESC);
   }
 
@@ -241,7 +210,7 @@ ${contextBlock}
     - 类型：一道"为什么"（理解作者的论点），一道"怎么用"（应用层面），一道"如果…会怎样"（延伸思考）
     - 不能出超出对应阶段书本内容的题`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject<GeneratedPlan>(prompt, PLAN_SCHEMA_DESC);
   }
 
@@ -281,7 +250,7 @@ export async function generatePlanFromCode(params: {
     ? params.code_content.slice(0, 80000) + "\n\n[... 代码内容过长已截断 ...]"
     : params.code_content;
 
-  const prompt = `你是一位资深技术导师和代码教练。用户提供了一个代码项目，请你深入分析这个项目的代码，然后基于代码的实际内容，制定一个阶段化的学习计划，帮助学习者系统地理解这个项目。
+  const prompt = `你是一位资深技术导师和代码教练。用户提供了一个真实代码仓库，请你像带新人读代码一样，制定「对着源码学」的阶段计划。
 
 ## 项目信息
 项目名称: ${params.project_name}
@@ -298,29 +267,27 @@ ${codeContentTruncated}
 当前水平: ${levelMap[params.skill_level] || params.skill_level}
 ${contextBlock}
 
-## 核心要求
-1. **基于代码的实际内容来规划**：阶段划分必须对应代码中的实际模块/层次/功能，不要凭空添加代码中没有的内容
-2. 将项目拆分为 4-6 个学习阶段，采用由浅入深的学习路径：
-   - 先从全局架构和入口开始（鸟瞰项目全貌）
-   - 再深入核心模块和设计模式
-   - 最后理解高级特性和系统交互
-3. 阶段之间循序渐进，按照理解代码的逻辑顺序安排
-4. 根据每日可用时间合理分配每个阶段的天数，总天数 = ${params.duration_weeks * 7} 天
-5. 每个阶段的核心知识点（key_topics）必须来自代码中实际使用的技术、设计模式、框架特性等，列出 3-6 个
-6. 每个阶段的学习目标（learning_objectives）列出 2-4 个可验证的目标
-7. 每个阶段写一段 800 字左右的学习导读（summary_text）：
-   - 必须基于代码中的实际实现来写
-   - 解释这部分代码的核心设计思路、关键逻辑、数据流向
-   - 指出代码中的设计亮点和可以学习的编程技巧
-   - 引用具体的文件名、函数名、类名来说明
-8. 每个阶段的 core_output 描述学完后的具体产出（如"能画出数据库层的 ER 图并解释每张表的用途"、"能独立修改某个模块并运行通过"）
-9. 每个阶段提供 1-2 个 real_world_cases（这种技术/设计模式在业界的真实应用案例）
-10. 每个阶段设计 3-5 个 assessment_questions（代码理解检测题）：
-    - 题目必须基于代码中这部分内容来出，读完对应代码就能回答
-    - 包含：代码理解题（这段代码做了什么）、设计思考题（为什么这样设计）、动手实践题（如果要改XXX你会怎么做）
-    - 不能出超出对应阶段代码范围的题`;
+## 核心要求（必须严格执行）
+1. **只讲仓库里真实存在的代码**：阶段划分必须对应实际目录/模块/入口文件，禁止编造不存在的类、接口或框架能力
+2. 拆成 4-6 个阶段，学习路径固定为：
+   - 入口与启动链路（main/cmd/app 入口、配置加载、依赖注入）
+   - 核心数据流/请求链路（一次完整调用怎么走完）
+   - 关键模块实现（存储、缓存、业务服务等）
+   - 并发/异步/边界情况与可观测性（按代码实际有的再写）
+   - 可改进点与面试向深挖（基于真实设计取舍）
+3. 每个阶段的 key_topics 必须能在代码中找到落点（技术名 + 对应模块）
+4. 每个阶段 learning_objectives 写 2-4 个「能指着代码说明」的目标
+5. summary_text（约 800 字）必须包含固定小节：
+   - 【精读文件】列出本阶段要打开的 3-8 个具体相对路径
+   - 【调用链路】用「文件A.函数X → 文件B.函数Y」描述主路径
+   - 【设计取舍】指出至少 1 个真实设计决策及其利弊
+   - 【动手检查】给 1 个小实验（改一处/打日志/画图）
+6. core_output 必须是可验证产物（如「画出从 HTTP 入口到 DB 的序列图，并标注关键函数」）
+7. assessment_questions 必须是代码题：定位某文件函数、解释分支、改需求你会动哪里；禁止空泛概念题
+8. 总天数 = ${params.duration_weeks * 7} 天，按每日 ${params.daily_hours} 小时分配 estimated_days
+9. 标题要具体到模块，避免「基础入门」「进阶提升」这类空标题`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject<GeneratedPlan>(prompt, PLAN_SCHEMA_DESC);
   }
 
@@ -449,7 +416,7 @@ ${answerBlock}
    - description: 推荐理由（一句话）
 8. missing_topics 列出未覆盖或理解不足的知识点`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject<AssessmentResult>(prompt, ASSESS_SCHEMA_DESC);
   }
 
@@ -515,7 +482,7 @@ export async function generateResources(params: {
 6. 每条资源给出推荐理由（≤100字）和预估学习时长
 7. 国内资源标记为 domestic，国外资源标记为 overseas`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     const result = await deepSeekGenerateObject<{ resources: z.infer<typeof resourceSchema>["resources"] }>(prompt, RESOURCE_SCHEMA_DESC);
     return result.resources;
   }
@@ -578,7 +545,7 @@ ${stageInfo}
 5. 关系要有实际意义，不要为了凑数
 6. 概念名称保持简洁（2-6个字）`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject(prompt, CONCEPT_SCHEMA_DESC);
   }
 
@@ -705,7 +672,7 @@ ${hasChatHistory
 - 简答题: 考察深层理解和应用能力
 - 所有题目不超纲：学完本阶段内容就应该能答出来`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject<GeneratedQuestion[]>(prompt, QUESTION_SCHEMA_DESC);
   }
 
@@ -756,7 +723,7 @@ ${params.previous_levels?.length ? `- 历史表现: ${params.previous_levels.joi
 3. analysis: 简短分析（2-3句话）
 4. recommended_actions: 2-3个具体建议`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject(prompt, MASTERY_SCHEMA_DESC);
   }
 
@@ -822,7 +789,7 @@ export async function generateStageProject(params: {
    - intermediate: 需要一定思考和查资料
    - advanced: 需要综合多个知识点解决问题`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     return deepSeekGenerateObject(prompt, PROJECT_SCHEMA_DESC);
   }
 
@@ -947,7 +914,7 @@ ${params.user_notes ? `## 学员已有笔记\n${params.user_notes}` : ""}
 5. one_line_summary: 一句话概括本阶段学习成果
 6. 必须基于实际对话内容，不要编造`;
 
-  if (isDeepSeek()) {
+  if (useStructuredTextFallback()) {
     const result = await deepSeekGenerateObject<StructuredSummary>(prompt, STRUCTURED_SUMMARY_SCHEMA_DESC);
     return JSON.stringify(result);
   }

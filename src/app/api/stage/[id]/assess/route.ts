@@ -13,7 +13,7 @@ export async function POST(
     return NextResponse.json({ error: "Stage not found" }, { status: 404 });
   }
 
-  if (stage.status !== "active") {
+  if (stage.status !== "active" && stage.status !== "completed") {
     return NextResponse.json({ error: "该阶段尚未解锁" }, { status: 400 });
   }
 
@@ -52,6 +52,16 @@ export async function POST(
       answers: hasAnswers ? answers : undefined,
     });
 
+    const enrichedPerQuestion = (result.per_question_results || []).map((pqr, i) => {
+      const sq = hasStructured ? (structured_answers as AssessmentQuestionInput[])[i] : undefined;
+      return {
+        ...pqr,
+        user_answer: sq?.user_answer || "",
+        correct_answer: sq?.correct_answer || "",
+        question_type: sq?.type || "",
+      };
+    });
+
     const assessmentId = createAssessment({
       stage_id: id,
       type: hasStructured ? "structured" : hasAnswers ? "qa" : "text",
@@ -64,7 +74,7 @@ export async function POST(
       feedback: result.feedback,
       missing_topics: result.missing_topics,
       suggestions: result.suggestions,
-      per_question_results: result.per_question_results,
+      per_question_results: enrichedPerQuestion,
     });
 
     // Create mastery profile (non-blocking)
@@ -148,6 +158,7 @@ export async function POST(
     return NextResponse.json({
       assessmentId,
       ...result,
+      per_question_results: enrichedPerQuestion,
     });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

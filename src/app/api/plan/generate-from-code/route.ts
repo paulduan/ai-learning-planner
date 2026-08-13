@@ -6,148 +6,12 @@ import {
 } from "@/db/queries";
 import fs from "fs";
 import path from "path";
-
-const IGNORED_DIRS = new Set([
-  "node_modules", ".git", ".next", "dist", "build", ".output",
-  "__pycache__", ".pytest_cache", ".mypy_cache", ".tox",
-  "vendor", ".idea", ".vscode", ".cursor", ".workflow",
-  "coverage", ".nyc_output", ".cache", ".turbo", ".vercel",
-  ".svn", ".hg", "target", "bin", "obj", ".gradle",
-  "Pods", ".dart_tool", ".pub-cache",
-]);
-
-const CODE_EXTENSIONS = new Set([
-  ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte",
-  ".py", ".pyx", ".pyi",
-  ".go",
-  ".java", ".kt", ".kts", ".scala",
-  ".rs",
-  ".c", ".cpp", ".cc", ".h", ".hpp",
-  ".cs",
-  ".rb",
-  ".php",
-  ".swift", ".m", ".mm",
-  ".dart",
-  ".lua",
-  ".sh", ".bash", ".zsh",
-  ".sql",
-  ".proto",
-  ".graphql", ".gql",
-  ".yaml", ".yml", ".toml",
-  ".wxml", ".wxss",
-]);
-
-const CONFIG_FILES = new Set([
-  "package.json", "tsconfig.json", "go.mod", "go.sum",
-  "Cargo.toml", "pom.xml", "build.gradle", "Makefile",
-  "Dockerfile", "docker-compose.yml", "requirements.txt",
-  "pyproject.toml", "setup.py", "Gemfile",
-  "pubspec.yaml", ".env.example", "app.json", "project.config.json",
-]);
-
-const MAX_FILE_SIZE = 30_000;
-const MAX_TOTAL_CHARS = 80_000;
-
-interface FileEntry {
-  relativePath: string;
-  content: string;
-  size: number;
-}
-
-function shouldIncludeFile(name: string): boolean {
-  const ext = path.extname(name).toLowerCase();
-  return CODE_EXTENSIONS.has(ext) || CONFIG_FILES.has(name);
-}
-
-function walkDir(dirPath: string, basePath: string, files: FileEntry[], totalChars: { count: number }) {
-  if (totalChars.count >= MAX_TOTAL_CHARS) return;
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  const sortedEntries = entries.sort((a, b) => {
-    if (a.isDirectory() && !b.isDirectory()) return -1;
-    if (!a.isDirectory() && b.isDirectory()) return 1;
-    return a.name.localeCompare(b.name);
-  });
-
-  for (const entry of sortedEntries) {
-    if (totalChars.count >= MAX_TOTAL_CHARS) break;
-
-    if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
-      walkDir(path.join(dirPath, entry.name), basePath, files, totalChars);
-    } else if (entry.isFile() && shouldIncludeFile(entry.name)) {
-      const fullPath = path.join(dirPath, entry.name);
-      const relativePath = path.relative(basePath, fullPath);
-
-      try {
-        const stat = fs.statSync(fullPath);
-        if (stat.size > MAX_FILE_SIZE || stat.size === 0) continue;
-
-        const content = fs.readFileSync(fullPath, "utf-8");
-        if (totalChars.count + content.length > MAX_TOTAL_CHARS) {
-          const remaining = MAX_TOTAL_CHARS - totalChars.count;
-          if (remaining > 500) {
-            files.push({ relativePath, content: content.slice(0, remaining) + "\n// [truncated]", size: stat.size });
-            totalChars.count = MAX_TOTAL_CHARS;
-          }
-          break;
-        }
-
-        files.push({ relativePath, content, size: stat.size });
-        totalChars.count += content.length;
-      } catch {
-        // skip unreadable files
-      }
-    }
-  }
-}
-
-function buildFileTree(dirPath: string, basePath: string, prefix: string = "", depth: number = 0, maxDepth: number = 4): string {
-  if (depth > maxDepth) return prefix + "...\n";
-
-  let result = "";
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch {
-    return result;
-  }
-
-  const filtered = entries
-    .filter(e => {
-      if (e.isDirectory()) return !IGNORED_DIRS.has(e.name) && !e.name.startsWith(".");
-      return shouldIncludeFile(e.name);
-    })
-    .sort((a, b) => {
-      if (a.isDirectory() && !b.isDirectory()) return -1;
-      if (!a.isDirectory() && b.isDirectory()) return 1;
-      return a.name.localeCompare(b.name);
-    });
-
-  for (let i = 0; i < filtered.length; i++) {
-    const entry = filtered[i];
-    const isLast = i === filtered.length - 1;
-    const connector = isLast ? "└── " : "├── ";
-    const childPrefix = isLast ? "    " : "│   ";
-
-    if (entry.isDirectory()) {
-      result += prefix + connector + entry.name + "/\n";
-      result += buildFileTree(
-        path.join(dirPath, entry.name), basePath,
-        prefix + childPrefix, depth + 1, maxDepth
-      );
-    } else {
-      result += prefix + connector + entry.name + "\n";
-    }
-  }
-  return result;
-}
+import {
+  buildFileTree,
+  countProjectFiles,
+  resolveProjectPath,
+  walkDir,
+} from "@/lib/code-project";
 
 export async function POST(request: Request) {
   try {
@@ -166,7 +30,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "请输入项目路径" }, { status: 400 });
     }
 
-    const resolvedPath = project_path.replace(/^~/, process.env.HOME || "");
+    const resolvedPath = resolveProjectPath(project_path.trim());
 
     if (!fs.existsSync(resolvedPath)) {
       return NextResponse.json({ error: "项目路径不存在" }, { status: 400 });
@@ -179,16 +43,23 @@ export async function POST(request: Request) {
 
     const projectName = path.basename(resolvedPath);
     const fileTree = buildFileTree(resolvedPath, resolvedPath);
+    const counts = countProjectFiles(resolvedPath);
 
-    if (!fileTree.trim()) {
+    if (!fileTree.trim() || counts.files === 0) {
       return NextResponse.json({ error: "项目中未找到可识别的源代码文件" }, { status: 400 });
     }
 
     if (body.validate_only) {
-      return NextResponse.json({ valid: true, project_name: projectName });
+      return NextResponse.json({
+        valid: true,
+        project_name: projectName,
+        file_count: counts.files,
+        dir_count: counts.dirs,
+        preview_tree: fileTree.split("\n").slice(0, 40).join("\n"),
+      });
     }
 
-    const files: FileEntry[] = [];
+    const files: { relativePath: string; content: string; size: number }[] = [];
     const totalChars = { count: 0 };
     walkDir(resolvedPath, resolvedPath, files, totalChars);
 
@@ -196,7 +67,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "项目中未找到可读取的源代码文件" }, { status: 400 });
     }
 
-    const codeContent = files.map(f =>
+    const codeContent = files.map((f) =>
       `=== ${f.relativePath} ===\n${f.content}`
     ).join("\n\n");
 
@@ -212,7 +83,7 @@ export async function POST(request: Request) {
       expected_outcome,
     });
 
-    const goalDesc = `深入学习项目「${projectName}」的代码实现`;
+    const goalDesc = `深入学习项目「${projectName}」的代码实现（源码路径: ${resolvedPath}）`;
 
     const planId = createPlan({
       title: generated.plan_title,
@@ -223,6 +94,10 @@ export async function POST(request: Request) {
       user_motivation: motivation,
       user_background: background,
       expected_outcome,
+      source_type: "code",
+      source_path: resolvedPath,
+      source_file_tree: fileTree,
+      source_files: files.map((f) => f.relativePath),
     });
 
     updatePlan(planId, {

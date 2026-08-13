@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { useKeywordHighlight } from "@/components/teach-chat";
 
 interface Config {
   llm_provider: string;
@@ -43,6 +44,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }> | null>(null);
+  const { keywordHighlight, setKeywordHighlight } = useKeywordHighlight();
 
   useEffect(() => {
     fetch("/api/config")
@@ -119,6 +121,12 @@ export default function SettingsPage() {
       { label: "DeepSeek Chat (推荐)", value: "deepseek-chat" },
       { label: "DeepSeek Reasoner", value: "deepseek-reasoner" },
     ],
+    kimi: [
+      { label: "Kimi K2 (推荐)", value: "kimi-k2-0711-preview" },
+      { label: "Moonshot 128K", value: "moonshot-v1-128k" },
+      { label: "Moonshot 32K", value: "moonshot-v1-32k" },
+      { label: "Moonshot 8K", value: "moonshot-v1-8k" },
+    ],
   };
 
   return (
@@ -134,6 +142,37 @@ export default function SettingsPage() {
 
       <main className="flex-1 px-6 py-8">
         <div className="max-w-2xl mx-auto space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>教学界面</CardTitle>
+              <CardDescription>
+                控制 AI 教学对话中的文字强调效果
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1 min-w-0">
+                  <Label>重点词下划线高亮</Label>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    开启后，AI 回复里的重点词会显示颜色与下划线；关闭后仅保留普通加粗。
+                  </p>
+                </div>
+                <Button
+                  variant={keywordHighlight ? "default" : "outline"}
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => {
+                    const next = !keywordHighlight;
+                    setKeywordHighlight(next);
+                    toast.success(next ? "已开启重点词高亮" : "已关闭重点词高亮");
+                  }}
+                >
+                  {keywordHighlight ? "已开启" : "已关闭"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>LLM 配置</CardTitle>
@@ -155,6 +194,7 @@ export default function SettingsPage() {
                     <SelectItem value="openai">OpenAI</SelectItem>
                     <SelectItem value="anthropic">Anthropic</SelectItem>
                     <SelectItem value="deepseek">DeepSeek</SelectItem>
+                    <SelectItem value="kimi">Kimi (Moonshot)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -199,9 +239,11 @@ export default function SettingsPage() {
                   placeholder={
                     config.llm_provider === "deepseek"
                       ? "默认: https://api.deepseek.com/v1"
-                      : config.llm_provider === "anthropic"
-                        ? "默认: https://api.anthropic.com"
-                        : "默认: https://api.openai.com/v1"
+                      : config.llm_provider === "kimi"
+                        ? "默认: https://api.moonshot.cn/v1"
+                        : config.llm_provider === "anthropic"
+                          ? "默认: https://api.anthropic.com"
+                          : "默认: https://api.openai.com/v1"
                   }
                   value={config.llm_base_url}
                   onChange={(e) => setConfig({ ...config, llm_base_url: e.target.value })}

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { getPlan, getStagesByPlan, getChatHistory, addChatMessage } from "@/db/queries";
+import { getStage, getPlan, getChatHistory, addChatMessage } from "@/db/queries";
 import { getModel } from "@/lib/llm";
 import { generateText } from "ai";
+import { getDb } from "@/db/schema";
+import { loadStageCodeContext } from "@/lib/code-project";
 
-function getInterviewStageId(planId: string, style: string) {
-  return `interview_${planId}_${style}`;
+function getInterviewChatId(stageId: string, style: string) {
+  return `stage_interview_${stageId}_${style}`;
 }
 
 const STYLE_PROMPTS: Record<string, { name: string; personality: string; rules: string }> = {
@@ -29,9 +31,9 @@ const STYLE_PROMPTS: Record<string, { name: string; personality: string; rules: 
 - 会对不完整的回答追问细节
 - 根据回答质量调整后续问题难度`,
     rules: `1. 开场简短介绍面试流程
-2. 从项目整体架构开始，逐渐深入技术细节
-3. 对每个回答追问 1-2 个follow-up问题
-4. 考察：基础概念 → 设计决策 → 性能优化 → 异常处理
+2. 从本阶段核心概念开始，逐渐深入实现细节
+3. 对每个回答追问 1-2 个 follow-up 问题
+4. 考察：基础概念 → 设计决策 → 性能/边界 → 落地实现
 5. 每次只问一个问题`,
   },
   tough: {
@@ -51,14 +53,12 @@ const STYLE_PROMPTS: Record<string, { name: string; personality: string; rules: 
 };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id: planId } = await params;
-  const url = new URL(_request.url);
-  const style = url.searchParams.get("style") || "standard";
-  const stageId = getInterviewStageId(planId, style);
-  const history = getChatHistory(stageId);
+  const { id: stageId } = await params;
+  const style = new URL(request.url).searchParams.get("style") || "standard";
+  const history = getChatHistory(getInterviewChatId(stageId, style));
   return NextResponse.json(history);
 }
 
@@ -66,8 +66,16 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id: planId } = await params;
-  const plan = getPlan(planId);
+  const { id: stageId } = await params;
+  const stage = getStage(stageId);
+  if (!stage) {
+    return NextResponse.json({ error: "Stage not found" }, { status: 404 });
+  }
+  if (stage.status === "locked") {
+    return NextResponse.json({ error: "请先解锁该阶段后再进行面试模拟" }, { status: 403 });
+  }
+
+  const plan = getPlan(stage.plan_id);
   if (!plan) {
     return NextResponse.json({ error: "Plan not found" }, { status: 404 });
   }
@@ -85,44 +93,56 @@ export async function POST(
   }
 
   const styleConfig = STYLE_PROMPTS[style] || STYLE_PROMPTS.standard;
-  const stageId = getInterviewStageId(planId, style);
+  const chatId = getInterviewChatId(stageId, style);
 
   try {
-    addChatMessage(stageId, "user", message);
+    addChatMessage(chatId, "user", message);
 
-    const history = getChatHistory(stageId);
+    const history = getChatHistory(chatId);
     const chatMessages = history.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
 
-    const stages = getStagesByPlan(planId);
-    const stagesSummary = stages.map((s) =>
-      `阶段${s.order_index + 1}: ${s.title}\n  知识点: ${s.key_topics.join("、")}\n  描述: ${s.description}`
-    ).join("\n\n");
+    let codeContext = "";
+    if (plan.source_type === "code" && plan.source_path) {
+      codeContext = loadStageCodeContext({
+        sourcePath: plan.source_path,
+        filePaths: plan.source_files || [],
+        stageTitle: stage.title,
+        keyTopics: stage.key_topics,
+        maxChars: 10000,
+      });
+    }
 
-    const systemPrompt = `你是一位${styleConfig.name}。你正在对一位学习者进行技术面试，考察他对一个技术项目的理解。
+    const systemPrompt = `你是一位${styleConfig.name}。你正在对一位学习者进行「本阶段专项」技术面试。
 
 ## 面试官性格
 ${styleConfig.personality}
 
-## 项目信息
-- 项目: ${plan.title}
+## 项目与阶段范围（严格限定）
+- 学习计划: ${plan.title}
 - 学习目标: ${plan.goal_description}
-
-## 候选人已学习的内容
-${stagesSummary}
+- 当前面试阶段: 第 ${stage.order_index + 1} 阶段「${stage.title}」
+- 阶段描述: ${stage.description}
+- 本阶段知识点: ${stage.key_topics.join("、")}
+- 本阶段目标产出: ${stage.core_output || "无"}
+${stage.summary_text ? `- 阶段导读摘要: ${stage.summary_text.slice(0, 1200)}` : ""}
 
 ## 面试规则（严格遵守）
 ${styleConfig.rules}
+- 问题必须紧扣本阶段知识点与导读内容，不要提前考后续阶段
+- 可以围绕原理、设计决策、实现细节、边界场景、面试常见追问展开
+- 每次只问一个问题
+${codeContext ? `
+## 本阶段相关源码（可用于出题与追问）
+${codeContext}
 
-## 面试范围
-- 基于候选人已学习的阶段内容进行提问
-- 可以考察：技术原理、设计决策、代码实现、性能优化、异常处理、系统架构
-- 面试问题必须和项目学习内容相关
+出题时优先要求候选人结合具体文件/函数回答；若其回答空泛，追问“对应到哪段代码”。
+` : ""}
 
 ## 如果这是面试的开始
-如果对话历史为空或只有1条消息（如"开始面试"），先做面试开场白，然后抛出第一个面试问题。`;
+如果对话历史为空或只有 1 条消息（如“开始面试”），先做简短开场，说明本次只考察本阶段，然后抛出第一个问题。`;
 
     const model = getModel();
     const { text } = await generateText({
@@ -131,14 +151,10 @@ ${styleConfig.rules}
       messages: chatMessages,
     });
 
-    addChatMessage(stageId, "assistant", text);
-
-    return NextResponse.json({
-      role: "assistant",
-      content: text,
-    });
+    addChatMessage(chatId, "assistant", text);
+    return NextResponse.json({ role: "assistant", content: text });
   } catch (e) {
-    console.error("[plan/interview] POST failed:", e);
+    console.error("[stage/interview] POST failed:", e);
     return NextResponse.json({ error: (e as Error).message || "面试失败" }, { status: 500 });
   }
 }
@@ -147,14 +163,10 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id: planId } = await params;
-  const url = new URL(request.url);
-  const style = url.searchParams.get("style") || "standard";
-  const stageId = getInterviewStageId(planId, style);
-
-  const { getDb } = await import("@/db/schema");
+  const { id: stageId } = await params;
+  const style = new URL(request.url).searchParams.get("style") || "standard";
+  const chatId = getInterviewChatId(stageId, style);
   const db = getDb();
-  db.prepare("DELETE FROM teaching_chat WHERE stage_id = ?").run(stageId);
-
+  db.prepare("DELETE FROM teaching_chat WHERE stage_id = ?").run(chatId);
   return NextResponse.json({ ok: true });
 }

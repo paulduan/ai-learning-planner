@@ -96,6 +96,12 @@ export default function NewPlanPage() {
   const [projectPath, setProjectPath] = useState("");
   const [projectValidated, setProjectValidated] = useState(false);
   const [projectValidating, setProjectValidating] = useState(false);
+  const [projectMeta, setProjectMeta] = useState<{
+    project_name: string;
+    file_count: number;
+    dir_count: number;
+    preview_tree: string;
+  } | null>(null);
 
   const [generatedPlan, setGeneratedPlan] = useState<{
     planId: string;
@@ -429,14 +435,14 @@ export default function NewPlanPage() {
               <div className="text-center mb-8">
                 <h2 className="text-3xl font-bold gradient-text mb-3">从代码学习</h2>
                 <p className="text-muted-foreground">
-                  输入本地项目路径，AI 会深入分析代码并为你制定学习计划
+                  对着真实仓库学：优先读入口与主链路，教学过程会持续引用具体文件与函数
                 </p>
               </div>
 
               <div className="glass-card rounded-xl p-6 space-y-5">
                 <div className="space-y-3">
                   <Label className="text-base font-medium flex items-center gap-2">
-                    <span className="text-lg">📁</span> 项目路径
+                    <span className="text-lg">📁</span> 本地项目路径
                   </Label>
                   <div className="flex gap-3">
                     <Input
@@ -445,6 +451,7 @@ export default function NewPlanPage() {
                       onChange={(e) => {
                         setProjectPath(e.target.value);
                         setProjectValidated(false);
+                        setProjectMeta(null);
                       }}
                       className="flex-1 h-12 rounded-xl bg-background/50 border-border/40 focus:border-primary/50 font-mono text-sm"
                     />
@@ -464,58 +471,75 @@ export default function NewPlanPage() {
                             const err = await res.json();
                             toast.error(err.error || "路径无效");
                             setProjectValidated(false);
+                            setProjectMeta(null);
                           } else {
+                            const data = await res.json();
                             setProjectValidated(true);
-                            const folderName = projectPath.trim().split("/").pop() || projectPath.trim();
-                            setGoal(`深入学习项目「${folderName}」的代码实现`);
-                            toast.success("项目路径有效");
+                            setProjectMeta({
+                              project_name: data.project_name || "",
+                              file_count: data.file_count || 0,
+                              dir_count: data.dir_count || 0,
+                              preview_tree: data.preview_tree || "",
+                            });
+                            setGoal(`深入学习项目「${data.project_name}」的代码实现`);
+                            toast.success(`已识别 ${data.file_count} 个源码文件`);
                           }
                         } catch {
                           toast.error("验证失败");
                           setProjectValidated(false);
+                          setProjectMeta(null);
                         } finally {
                           setProjectValidating(false);
                         }
                       }}
                     >
-                      {projectValidating ? "验证中..." : "验证路径"}
+                      {projectValidating ? "扫描中..." : "扫描项目"}
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground/70">
-                    支持读取 JS/TS/Go/Python/Java/Rust 等语言的项目代码
+                    自动忽略 node_modules/.git 等目录；优先读取入口文件与配置，单文件 ≤30KB，总内容约 120KB
                   </p>
                 </div>
 
-                {projectValidated && (
-                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-500/5 border border-green-500/20">
-                    <span className="text-base">✅</span>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-green-400">项目路径有效</p>
-                      <p className="text-xs text-muted-foreground mt-0.5 font-mono">{projectPath}</p>
+                {projectValidated && projectMeta && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-500/5 border border-green-500/20">
+                      <span className="text-base">✅</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-green-400">
+                          已识别「{projectMeta.project_name}」· {projectMeta.file_count} 个文件 / {projectMeta.dir_count} 个目录
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5 font-mono truncate">{projectPath}</p>
+                      </div>
                     </div>
+                    {projectMeta.preview_tree && (
+                      <pre className="px-4 py-3 rounded-xl bg-background/50 border border-border/30 text-[11px] text-muted-foreground overflow-x-auto max-h-48 overflow-y-auto font-mono leading-relaxed">
+                        {projectMeta.preview_tree}
+                      </pre>
+                    )}
                   </div>
                 )}
 
                 <div className="px-4 py-3 rounded-xl bg-primary/5 border border-primary/10 space-y-2">
                   <p className="text-sm font-medium flex items-center gap-2">
-                    <span>💡</span> AI 会做什么
+                    <span>💡</span> 强化后的学习方式
                   </p>
                   <ul className="text-xs text-muted-foreground space-y-1.5">
                     <li className="flex items-start gap-2">
                       <span className="shrink-0 mt-0.5">1.</span>
-                      <span>扫描项目文件结构，识别核心模块</span>
+                      <span>按入口 → 主调用链 → 核心模块拆阶段，并标注精读文件</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="shrink-0 mt-0.5">2.</span>
-                      <span>阅读源代码，理解架构设计和实现细节</span>
+                      <span>保留项目路径，后续 AI 教学会回读相关源码并引用具体函数</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="shrink-0 mt-0.5">3.</span>
-                      <span>生成由浅入深的代码学习计划</span>
+                      <span>检测题与面试模拟都围绕真实代码设计，而不是空泛概念</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="shrink-0 mt-0.5">4.</span>
-                      <span>通过苏格拉底式问答教你理解每一层代码</span>
+                      <span>用「打开某文件回答问题」的方式推进，逼你真正读懂代码</span>
                     </li>
                   </ul>
                 </div>

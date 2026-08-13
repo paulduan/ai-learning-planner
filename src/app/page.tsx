@@ -86,7 +86,7 @@ export default function HomePage() {
               <span className="text-lg shrink-0">⚡</span>
               <div className="text-sm text-amber-200/80 leading-relaxed">
                 首次使用需配置 API Key
-                <span className="text-muted-foreground"> — 支持 OpenAI / Anthropic / DeepSeek</span>
+                <span className="text-muted-foreground"> — 支持 OpenAI / Anthropic / DeepSeek / Kimi</span>
               </div>
             </div>
 
