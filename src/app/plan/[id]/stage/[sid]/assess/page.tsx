@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface StructuredQuestion {
   type: "choice" | "fill" | "true_false" | "short_answer";
@@ -283,7 +284,9 @@ export default function AssessPage() {
                       <Badge variant="outline" className="text-[10px] mb-2 font-normal">
                         {questionTypeLabel(currentQ.type)}
                       </Badge>
-                      <p className="text-base font-medium leading-relaxed">{currentQ.question}</p>
+                      <div className="text-base font-medium leading-relaxed">
+                        <MarkdownRenderer content={currentQ.question} />
+                      </div>
                     </div>
                   </div>
 
@@ -429,12 +432,12 @@ export default function AssessPage() {
                                 {Math.round(pqr.score)} 分
                               </span>
                             </div>
-                            <p className="text-xs text-muted-foreground mb-2 line-clamp-1">
-                              {pqr.question_text}
-                            </p>
-                            <p className="text-sm text-muted-foreground leading-relaxed">
-                              {pqr.feedback}
-                            </p>
+                            <div className="text-xs text-muted-foreground mb-2 line-clamp-1">
+                              <MarkdownRenderer content={pqr.question_text} />
+                            </div>
+                            <div className="text-sm text-muted-foreground leading-relaxed">
+                              <MarkdownRenderer content={pqr.feedback} />
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -448,9 +451,9 @@ export default function AssessPage() {
                 <h3 className="font-semibold flex items-center gap-2">
                   <span>💬</span> 总体反馈
                 </h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {result.feedback}
-                </p>
+                <div className="text-sm text-muted-foreground leading-relaxed">
+                  <MarkdownRenderer content={result.feedback} />
+                </div>
 
                 {!result.passed && result.missing_topics.length > 0 && (
                   <div>
@@ -597,7 +600,7 @@ function QuestionInput({
               }`}>
                 {label}
               </span>
-              <span className="text-sm pt-0.5">{opt}</span>
+              <span className="text-sm pt-0.5"><MarkdownRenderer content={opt} /></span>
             </button>
           );
         })}

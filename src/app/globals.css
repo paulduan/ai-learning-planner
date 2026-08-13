@@ -155,3 +155,34 @@
     -webkit-app-region: no-drag;
   }
 }
+
+/* KaTeX overrides for dark theme */
+.katex {
+  font-size: 1.05em;
+}
+.katex-display {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25em 0;
+}
+.katex-display > .katex {
+  white-space: normal;
+}
+.dark .katex .mord,
+.dark .katex .mbin,
+.dark .katex .mrel,
+.dark .katex .mopen,
+.dark .katex .mclose,
+.dark .katex .mpunct,
+.dark .katex .mop,
+.dark .katex .minner {
+  color: inherit;
+}
+
+.markdown-body .katex-display {
+  background: oklch(0.14 0.015 270 / 50%);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid oklch(1 0.01 270 / 6%);
+}
