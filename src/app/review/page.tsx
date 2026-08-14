@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -577,7 +578,9 @@ function ReviewCenterContent() {
 
               {currentQuestion && (
                 <div className="glass-card rounded-lg p-5 space-y-4">
-                  <p className="font-medium leading-relaxed">{currentQuestion.question}</p>
+                  <div className="font-medium leading-relaxed">
+                    <MarkdownRenderer content={currentQuestion.question} />
+                  </div>
 
                   {currentQuestion.type === "choice" && currentQuestion.options ? (
                     <div className="grid gap-2">

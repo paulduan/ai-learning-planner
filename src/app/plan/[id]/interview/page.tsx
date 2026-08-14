@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface ChatMsg {
   role: string;
@@ -230,7 +231,11 @@ export default function InterviewPage() {
                     <span>{currentStyle.name}</span>
                   </div>
                 )}
-                {msg.content}
+                {msg.role === "assistant" ? (
+                  <MarkdownRenderer content={msg.content} />
+                ) : (
+                  msg.content
+                )}
               </div>
             </div>
           ))}

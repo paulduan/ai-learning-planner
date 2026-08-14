@@ -208,6 +208,18 @@
     text-decoration-thickness: 1.5px;
   }
 
+  .keyword-highlight-on strong {
+    background: linear-gradient(180deg, transparent 62%, oklch(0.75 0.16 85 / 35%) 62%);
+    color: oklch(0.9 0.12 85);
+    font-weight: 600;
+    padding: 0 0.12em;
+    border-radius: 2px;
+    text-decoration: underline;
+    text-decoration-color: oklch(0.78 0.14 85 / 55%);
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1.5px;
+  }
+
   .keyword-code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.92em;
@@ -263,4 +275,35 @@
 @keyframes teachFloat {
   0%, 100% { transform: translateY(0) scale(1); }
   50% { transform: translateY(-18px) scale(1.04); }
+}
+
+/* KaTeX overrides for dark theme */
+.katex {
+  font-size: 1.05em;
+}
+.katex-display {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25em 0;
+}
+.katex-display > .katex {
+  white-space: normal;
+}
+.dark .katex .mord,
+.dark .katex .mbin,
+.dark .katex .mrel,
+.dark .katex .mopen,
+.dark .katex .mclose,
+.dark .katex .mpunct,
+.dark .katex .mop,
+.dark .katex .minner {
+  color: inherit;
+}
+
+.markdown-body .katex-display {
+  background: oklch(0.14 0.015 270 / 50%);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid oklch(1 0.01 270 / 6%);
 }

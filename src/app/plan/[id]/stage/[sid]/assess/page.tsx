@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface StructuredQuestion {
   type: "choice" | "fill" | "true_false" | "short_answer";
@@ -328,7 +329,9 @@ export default function AssessPage() {
                       <Badge variant="outline" className="text-[10px] mb-2 font-normal">
                         {questionTypeLabel(currentQ.type)}
                       </Badge>
-                      <p className="text-base font-medium leading-relaxed">{currentQ.question}</p>
+                      <div className="text-base font-medium leading-relaxed">
+                        <MarkdownRenderer content={currentQ.question} />
+                      </div>
                     </div>
                   </div>
 
@@ -520,9 +523,9 @@ export default function AssessPage() {
                 <h3 className="font-semibold flex items-center gap-2">
                   <span>💬</span> 总体反馈
                 </h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {result.feedback}
-                </p>
+                <div className="text-sm text-muted-foreground leading-relaxed">
+                  <MarkdownRenderer content={result.feedback} />
+                </div>
 
                 {!result.passed && result.missing_topics.length > 0 && (
                   <div>
@@ -667,25 +670,31 @@ function PerQuestionDetail({ results }: { results: PerQuestionResult[] }) {
                     {Math.round(pqr.score)} 分
                   </span>
                 </div>
-                <p className="text-sm text-foreground/80 mb-3">{pqr.question_text}</p>
+                <p className="text-sm text-foreground/80 mb-3">
+                  <MarkdownRenderer content={pqr.question_text} />
+                </p>
 
                 {pqr.user_answer && (
                   <div className="mb-2 p-3 rounded-lg bg-background/40 border border-border/20">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">你的回答</div>
-                    <p className="text-sm text-foreground/70">{pqr.user_answer}</p>
+                    <div className="text-sm text-foreground/70">
+                      <MarkdownRenderer content={pqr.user_answer} />
+                    </div>
                   </div>
                 )}
 
                 {pqr.correct_answer && !pqr.is_correct && (
                   <div className="mb-2 p-3 rounded-lg bg-green-500/5 border border-green-500/10">
                     <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1">参考答案</div>
-                    <p className="text-sm text-green-300/80">{pqr.correct_answer}</p>
+                    <div className="text-sm text-green-300/80">
+                      <MarkdownRenderer content={pqr.correct_answer} />
+                    </div>
                   </div>
                 )}
 
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {pqr.feedback}
-                </p>
+                <div className="text-sm text-muted-foreground leading-relaxed">
+                  <MarkdownRenderer content={pqr.feedback} />
+                </div>
               </div>
             </div>
           </div>
@@ -735,7 +744,7 @@ function QuestionInput({
               }`}>
                 {label}
               </span>
-              <span className="text-sm pt-0.5">{opt}</span>
+              <span className="text-sm pt-0.5"><MarkdownRenderer content={opt} /></span>
             </button>
           );
         })}

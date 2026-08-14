@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  HighlightedText,
   LearnerAvatarPicker,
   TeachBackgroundPicker,
   TeachChatBackdrop,
@@ -18,6 +17,7 @@ import {
   useTutorAvatar,
 } from "@/components/teach-chat";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface Plan {
   id: string;
@@ -675,7 +675,7 @@ export default function PlanDashboard() {
                             className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm leading-relaxed relative ${
                               isUser
                                 ? "teach-bubble-user rounded-br-md"
-                                : "teach-bubble-ai rounded-bl-md text-foreground/95"
+                                : `teach-bubble-ai rounded-bl-md text-foreground/95 ${keywordHighlight ? "keyword-highlight-on" : ""}`
                             }`}
                           >
                             {isUser ? (
@@ -685,7 +685,9 @@ export default function PlanDashboard() {
                                 ))}
                               </div>
                             ) : (
-                              <HighlightedText text={msg.content} highlight={keywordHighlight} />
+                              <div className="relative z-[1]">
+                                <MarkdownRenderer content={msg.content} />
+                              </div>
                             )}
                           </div>
                           {isUser && (
@@ -1007,10 +1009,8 @@ export default function PlanDashboard() {
                         return (
                           <div>
                             <h3 className="text-sm font-medium mb-2">AI 阶段笔记</h3>
-                            <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 min-h-[120px]">
-                              {stageNote.ai_summary.split("\n").map((line, i) => (
-                                <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-2 last:mb-0">{line}</p>
-                              ))}
+                            <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 min-h-[120px] text-sm text-muted-foreground">
+                              <MarkdownRenderer content={stageNote.ai_summary} />
                             </div>
                           </div>
                         );
@@ -1183,10 +1183,8 @@ export default function PlanDashboard() {
                     {selectedStage.summary_text && (
                       <div>
                         <h3 className="text-lg font-semibold mb-3">📖 导读</h3>
-                        <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20">
-                          {selectedStage.summary_text.split("\n").map((line, i) => (
-                            <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-2 last:mb-0">{line}</p>
-                          ))}
+                        <div className="px-5 py-4 rounded-xl border border-border/20 bg-card/20 text-sm text-muted-foreground">
+                          <MarkdownRenderer content={selectedStage.summary_text} />
                         </div>
                       </div>
                     )}

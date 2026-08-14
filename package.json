@@ -69,14 +69,18 @@
     "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "katex": "^0.18.4",
     "lucide-react": "^1.23.0",
     "next": "16.2.10",
     "next-themes": "^0.4.6",
     "pdf-parse": "^2.4.5",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-markdown": "^10.1.0",
     "reactflow": "^11.11.4",
     "recharts": "^3.9.1",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "shadcn": "^4.12.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
@@ -100,5 +104,6 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "wait-on": "^9.0.10"
-  }
+  },
+  "packageManager": "pnpm@11.21.0+sha512.521705bce689924eac72f5a3587122f362689ef6571e55ba80076fd637c11132ecffada26fad4ea79c485bfddbfd3d5a2a5b05805a77e893de71ec8a6cca3bb1"
 }
